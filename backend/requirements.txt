@@ -3,3 +3,4 @@ asyncssh==2.14.0
 boto3==1.28.44
 PyJWT==2.8.0
 passlib[bcrypt]==1.7.4
+uvicorn==0.23.2
