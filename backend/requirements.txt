@@ -1,6 +1,17 @@
+# 核心 Web 框架
+fastapi==0.103.1
+uvicorn==0.23.2
+# 数据库与缓存
+psycopg2-binary==2.9.7
+sqlalchemy==2.0.20
+redis==5.0.0
+# 网络请求
+httpx==0.25.0
+# 配置管理
 pydantic-settings==2.0.3
+# SSH 与 华为云 OBS
 asyncssh==2.14.0
 boto3==1.28.44
+# 鉴权与安全
 PyJWT==2.8.0
 passlib[bcrypt]==1.7.4
-uvicorn==0.23.2
