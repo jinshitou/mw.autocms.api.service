@@ -9,7 +9,8 @@ class DeployRequest(BaseModel):
     server_ip: str
     sites: List[SiteItem]
     template_key: str = "eyoucms_core.zip"
-    tdk_config: Dict[str, str] "title": "默认测试标题",
+    tdk_config: Dict[str, str] = {
+        "title": "默认测试标题",
         "keywords": "测试,默认",
         "description": "这是默认测试描述"
     }

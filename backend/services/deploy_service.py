@@ -14,7 +14,8 @@ class DeployEngine:
         await self.bt_api.create_site(domain=domain, php_version="74")
         await self.bt_api.create_database(db_name, db_user, db_pass)
 
-        print(f"[{domain}] Sms_core.zip") 
+        print(f"[{domain}] Step 2: 获取 OBS 授权下载链接...")
+        core_url = self.obs.get_presigned_url("eyoucms_core.zip") 
         tpl_url = self.obs.get_presigned_url(tpl_obs_key)
 
         print(f"[{domain}] Step 3: 下发 SSH 指令部署系统与 TDK...")
@@ -35,4 +36,4 @@ class DeployEngine:
         rm -rf {site_dir}/install/
         """
         await execute_remote_cmd(self.server_ip, self.ssh_port, ssh_command)
-        return s", "msg": f"{domain} 部署完成"}
+        return {"status": "success", "msg": f"{domain} 部署完成"}

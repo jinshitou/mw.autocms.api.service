@@ -1,0 +1,42 @@
+# ==========================================
+# 批量易优 SaaS - Git 忽略清单
+# ==========================================
+
+# 1. 机密配置与环境变量 (⚠️ 极其重要，防黑客盗取 AK/SK 和密码)
+.env
+.env.*
+*.pem
+*.key
+
+# 2. Python 虚拟环境 (⚠️ 极其重要，不上传本地包)
+venv/
+.venv/
+env/
+ENV/
+backend/venv/
+
+# 3. Python 编译缓存 (运行时产生的垃圾)
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# 4. Docker 数据库本地挂载卷 (防止把你本地测试的数据传到云端覆盖生产数据)
+pg_data/
+redis_data/
+
+# 5. Mac 系统专属垃圾文件
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# 6. 编辑器配置 (VS Code 等)
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 7. 运行日志与临时文件
+*.log
+logs/
+temp/
