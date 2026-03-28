@@ -13,14 +13,14 @@ services:
       - pg_data:/var/lib/postgresql/data
       # 魔法指令：将 init.sql 挂载到指定目录，实现开机自动建表
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "5432:5432"
+    #ports:
+    #  - "5432:5432"
 
   redis:
     image: redis:7-alpine
     restart: always
-    ports:
-      - "6379:6379"
+    #ports:
+     # - "6379:6379" 没有外部访问需求，不需要暴露，且会跟本机redis冲突
 
   backend_api:
     build: ./backend
