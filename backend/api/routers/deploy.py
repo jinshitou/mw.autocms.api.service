@@ -19,7 +19,8 @@ async def submit_batch_deploy(request: DeployRequest):
             tdk_config=request.tdk_config,
             admin_path=request.admin_path,
             bt_url=request.bt_url,
-            bt_k)
+            bt_key=request.bt_key
+        )
         task_records.append({"domain": site.domain, "task_id": task.id})
 
     return {
