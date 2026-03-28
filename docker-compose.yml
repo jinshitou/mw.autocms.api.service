@@ -1,0 +1,42 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  db:
+    image: postgres:14-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: eyou_admin
+      POSTGRES_PASSWORD: eyou_secure_pass_2026
+      POSTGRES_DB: eyou_saas
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # 魔法指令：将 init.sql 挂载到指定目录，实现开机自动建表
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+
+  backend_api:
+    build: ./backend
+    restart: always
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ./backend:/app
+      - /root/.ssh:/root/.ssh:ro   # <--- 新增这行：将宿主机的 ssh 密钥只读挂载进容器
+    ports:
+      - "8230:8000"
+    environment:
+      - DATABASE_URL=postgresql://eyou_admin:eyou_secure_pass_2026@db:5432/eyou_saas
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+volumes:
+  pg_data:
