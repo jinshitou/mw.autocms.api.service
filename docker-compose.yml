@@ -1,4 +1,3 @@
-# docker-compose.yml
 version: '3.8'
 
 services:
@@ -11,16 +10,12 @@ services:
       POSTGRES_DB: eyou_saas
     volumes:
       - pg_data:/var/lib/postgresql/data
-      # 魔法指令：将 init.sql 挂载到指定目录，实现开机自动建表
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-    #ports:
-    #  - "5432:5432"
 
   redis:
     image: redis:7-alpine
     restart: always
-    #ports:
-     # - "6379:6379" 没有外部访问需求，不需要暴露，且会跟本机redis冲突
+    # 💡 魔法指令 1：强制忽略 ARM64 架构的内核警告，防止 Redis 自杀
+    command: redis-server --ignore-warnings ARM64-COW-BUG
 
   backend_api:
     build: ./backend
@@ -28,9 +23,24 @@ services:
     command: python -m uvicorn main:app --host 0.0.0.0 --port 8000
     volumes:
       - ./backend:/app
-      - /root/.ssh:/root/.ssh:ro   # <--- 新增这行：将宿主机的 ssh 密钥只读挂载进容器
+      - /root/.ssh:/root/.ssh:ro
     ports:
       - "8230:8000"
+    environment:
+      - DATABASE_URL=postgresql://eyou_admin:eyou_secure_pass_2026@db:5432/eyou_saas
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+  # 💡 魔法指令 2：失踪的 Celery 大军重新归队！
+  celery_worker:
+    build: ./backend
+    restart: always
+    command: celery -A worker.celery_app worker --loglevel=info --concurrency=4
+    volumes:
+      - ./backend:/app
+      - /root/.ssh:/root/.ssh:ro
     environment:
       - DATABASE_URL=postgresql://eyou_admin:eyou_secure_pass_2026@db:5432/eyou_saas
       - REDIS_URL=redis://redis:6379/0
