@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Optional, List
 from datetime import datetime
 
 class SiteBase(BaseModel):
@@ -16,6 +16,30 @@ class SiteResponse(SiteBase):
     id: int
     created_at: datetime
     updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class SitePageResponse(BaseModel):
+    items: List[SiteResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class SiteBatchDeleteRequest(BaseModel):
+    site_ids: List[int] = Field(default_factory=list)
+
+
+class SiteDeployLogResponse(BaseModel):
+    id: int
+    site_id: int
+    level: str
+    stage: str
+    message: str
+    created_at: datetime
 
     class Config:
         orm_mode = True

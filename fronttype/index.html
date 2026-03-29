@@ -76,7 +76,7 @@
                 <div class="flex justify-between items-center mb-6">
                     <h2 class="text-xl font-bold text-white">🌐 站点管理</h2>
                     <div class="flex gap-2">
-                        <select v-model="siteFilterServerId" @change="fetchSites" class="bg-darkbg border border-panelborder text-sm rounded px-3 py-2 outline-none focus:border-brand text-gray-300">
+                        <select v-model="siteFilterServerId" @change="onSiteFilterChange" class="bg-darkbg border border-panelborder text-sm rounded px-3 py-2 outline-none focus:border-brand text-gray-300">
                             <option value="">全部服务器</option>
                             <option v-for="server in servers" :key="server.id" :value="server.id">{{ server.name }}</option>
                         </select>
@@ -87,14 +87,17 @@
                 
                 <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg overflow-hidden flex-1 flex flex-col">
                     <div class="p-3 border-b border-panelborder bg-darkbg/50 flex gap-2">
-                        <button class="bg-danger/20 text-danger border border-danger/50 hover:bg-danger/40 px-3 py-1.5 rounded text-xs ml-auto transition-colors">批量删除 (危险)</button>
+                        <span class="text-xs text-gray-500 self-center">共 {{ siteTotal }} 条，当前第 {{ sitePage }} / {{ siteTotalPages || 1 }} 页</span>
+                        <button @click="batchDeleteSites" :disabled="selectedSiteIds.length === 0" class="bg-danger/20 text-danger border border-danger/50 hover:bg-danger/40 px-3 py-1.5 rounded text-xs ml-auto transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                            批量删除 ({{ selectedSiteIds.length }})
+                        </button>
                     </div>
                     
                     <div class="flex-1 overflow-auto">
                         <table class="w-full text-left text-[13px] whitespace-nowrap">
                             <thead class="sticky top-0 bg-gray-800 text-gray-400 border-b border-panelborder shadow-sm z-10">
                                 <tr>
-                                    <th class="p-3 w-10"><input type="checkbox" class="rounded bg-darkbg"></th>
+                                    <th class="p-3 w-10"><input type="checkbox" :checked="isAllSitesSelected" @change="toggleSelectAllSites($event)" class="rounded bg-darkbg"></th>
                                     <th class="p-3">域名</th>
                                     <th class="p-3">绑定 IP</th>
                                     <th class="p-3">标题(T)摘要</th>
@@ -108,7 +111,7 @@
                                     <td colspan="7" class="p-8 text-center text-gray-500">暂无站点数据，去批量上站试试吧</td>
                                 </tr>
                                 <tr v-for="site in sites" :key="site.id" class="hover:bg-gray-700/50 transition-colors">
-                                    <td class="p-3"><input type="checkbox" class="rounded bg-darkbg"></td>
+                                    <td class="p-3"><input type="checkbox" :checked="selectedSiteIds.includes(site.id)" @change="toggleSelectSite(site.id, $event)" class="rounded bg-darkbg"></td>
                                     <td class="p-3 font-medium text-brand hover:underline cursor-pointer"><a :href="'http://' + site.domain" target="_blank">{{ site.domain }}</a></td>
                                     <td class="p-3 text-gray-400 font-mono text-xs">{{ site.bind_ip }}</td>
                                     <td class="p-3 text-gray-400 truncate max-w-[150px]" :title="site.tdk_title">{{ site.tdk_title || '-' }}</td>
@@ -119,12 +122,18 @@
                                     </td>
                                     <td class="p-3 text-gray-400 text-xs">{{ new Date(site.created_at).toLocaleString() }}</td>
                                     <td class="p-3 text-right pr-4 space-x-3">
+                                        <button @click="openSiteLogs(site)" class="text-gray-300 hover:text-white" title="查看日志"><i class="fa-solid fa-file-lines"></i></button>
                                         <button @click="deleteSite(site.id)" class="text-danger hover:text-red-400" title="删除记录"><i class="fa-solid fa-trash"></i></button>
                                         <a :href="'http://' + site.domain + '/' + site.admin_path" target="_blank" class="text-gray-400 hover:text-white" title="进入后台"><i class="fa-solid fa-arrow-right-to-bracket"></i></a>
                                     </td>
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+                    <div class="px-4 py-3 border-t border-panelborder bg-darkbg/50 flex items-center justify-end gap-2">
+                        <button @click="changeSitePage(sitePage - 1)" :disabled="sitePage <= 1" class="px-3 py-1.5 text-xs rounded border border-panelborder hover:border-brand disabled:opacity-40 disabled:cursor-not-allowed">上一页</button>
+                        <span class="text-xs text-gray-400 w-28 text-center">{{ sitePage }} / {{ siteTotalPages || 1 }}</span>
+                        <button @click="changeSitePage(sitePage + 1)" :disabled="sitePage >= siteTotalPages" class="px-3 py-1.5 text-xs rounded border border-panelborder hover:border-brand disabled:opacity-40 disabled:cursor-not-allowed">下一页</button>
                     </div>
                 </div>
             </div>
@@ -419,6 +428,29 @@
         </div>
     </div>
 
+    <div v-if="showSiteLogsModal" class="fixed inset-0 z-50 flex items-center justify-center modal-bg">
+        <div class="bg-panelbg border border-panelborder rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div class="px-6 py-4 border-b border-panelborder flex justify-between items-center">
+                <h3 class="font-bold text-white">部署日志：{{ activeLogSite?.domain || '-' }}</h3>
+                <button @click="showSiteLogsModal = false" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="px-6 py-3 border-b border-panelborder bg-darkbg/50 flex justify-between items-center">
+                <span class="text-xs text-gray-400">共 {{ siteLogs.length }} 条</span>
+                <button @click="fetchSiteLogs" :disabled="!activeLogSite || isLoadingSiteLogs" class="text-xs px-3 py-1.5 rounded border border-panelborder hover:border-brand disabled:opacity-40">刷新日志</button>
+            </div>
+            <div class="p-4 overflow-y-auto flex-1 space-y-2 font-mono text-xs">
+                <div v-if="siteLogs.length === 0" class="text-gray-500 text-center py-8">暂无日志</div>
+                <div v-for="log in siteLogs" :key="log.id" class="p-2 rounded border border-panelborder bg-darkbg/60">
+                    <div class="flex items-center justify-between mb-1">
+                        <span :class="['px-2 py-0.5 rounded text-[10px] uppercase', log.level === 'error' ? 'bg-danger/20 text-danger' : (log.level === 'success' ? 'bg-success/20 text-success' : 'bg-brand/20 text-brand')]">{{ log.level }}</span>
+                        <span class="text-gray-500">{{ new Date(log.created_at).toLocaleString() }}</span>
+                    </div>
+                    <div class="text-gray-300">[{{ log.stage }}] {{ log.message }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </div>
 
 <script>
@@ -544,19 +576,89 @@
             // ---- 站点管理 ----
             const sites = ref([]);
             const siteFilterServerId = ref('');
+            const selectedSiteIds = ref([]);
+            const sitePage = ref(1);
+            const sitePageSize = ref(20);
+            const siteTotal = ref(0);
+            const siteTotalPages = ref(1);
+            const showSiteLogsModal = ref(false);
+            const activeLogSite = ref(null);
+            const siteLogs = ref([]);
+            const isLoadingSiteLogs = ref(false);
+            const isAllSitesSelected = computed(() => sites.value.length > 0 && sites.value.every(s => selectedSiteIds.value.includes(s.id)));
             const fetchSites = async () => {
                 try {
-                    const url = siteFilterServerId.value ? `/sites/?server_id=${siteFilterServerId.value}` : '/sites/';
-                    sites.value = await ax.get(url);
+                    const params = new URLSearchParams();
+                    params.set('page', String(sitePage.value));
+                    params.set('page_size', String(sitePageSize.value));
+                    if (siteFilterServerId.value) params.set('server_id', String(siteFilterServerId.value));
+                    const res = await ax.get(`/sites/?${params.toString()}`);
+                    sites.value = res.items || [];
+                    siteTotal.value = res.total || 0;
+                    siteTotalPages.value = Math.max(res.total_pages || 1, 1);
+                    selectedSiteIds.value = selectedSiteIds.value.filter(id => sites.value.some(site => site.id === id));
                 } catch(e) {}
+            };
+            const onSiteFilterChange = async () => {
+                sitePage.value = 1;
+                selectedSiteIds.value = [];
+                await fetchSites();
+            };
+            const changeSitePage = async (nextPage) => {
+                if (nextPage < 1 || nextPage > siteTotalPages.value) return;
+                sitePage.value = nextPage;
+                await fetchSites();
+            };
+            const toggleSelectSite = (siteId, evt) => {
+                const checked = !!evt?.target?.checked;
+                if (checked) {
+                    if (!selectedSiteIds.value.includes(siteId)) selectedSiteIds.value.push(siteId);
+                } else {
+                    selectedSiteIds.value = selectedSiteIds.value.filter(id => id !== siteId);
+                }
+            };
+            const toggleSelectAllSites = (evt) => {
+                const checked = !!evt?.target?.checked;
+                selectedSiteIds.value = checked ? sites.value.map(s => s.id) : [];
             };
             const deleteSite = async (id) => {
                 if(confirm('确认删除该站点记录? (仅删除记录，不影响服务器实际站点)')) {
                     try {
                         await ax.delete(`/sites/${id}`);
+                        selectedSiteIds.value = selectedSiteIds.value.filter(sid => sid !== id);
                         fetchSites();
                         showToast('站点记录已删除', 'success');
                     } catch(e) {}
+                }
+            };
+            const batchDeleteSites = async () => {
+                const ids = [...selectedSiteIds.value];
+                if (!ids.length) return;
+                if (!confirm(`确认批量删除 ${ids.length} 条站点记录吗？`)) return;
+                try {
+                    const res = await ax.post('/sites/batch-delete', { site_ids: ids });
+                    selectedSiteIds.value = [];
+                    showToast(`批量删除完成：${res.deleted || 0} 条`, 'success');
+                    if (sitePage.value > 1 && sites.value.length <= 1) sitePage.value -= 1;
+                    fetchSites();
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const openSiteLogs = async (site) => {
+                activeLogSite.value = site;
+                showSiteLogsModal.value = true;
+                await fetchSiteLogs();
+            };
+            const fetchSiteLogs = async () => {
+                if (!activeLogSite.value?.id) return;
+                isLoadingSiteLogs.value = true;
+                try {
+                    siteLogs.value = await ax.get(`/sites/${activeLogSite.value.id}/logs?limit=500`);
+                } catch (e) {
+                    showToast(e, 'error');
+                } finally {
+                    isLoadingSiteLogs.value = false;
                 }
             };
 
@@ -663,11 +765,27 @@
             };
             const copyAvailableIps = async () => {
                 if (!availableIpList.value.length) return showToast('当前服务器没有可复制的 IP 池', 'error');
+                const text = availableIpList.value.join('\n');
                 try {
-                    await navigator.clipboard.writeText(availableIpList.value.join('\n'));
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(text);
+                    } else {
+                        const ta = document.createElement('textarea');
+                        ta.value = text;
+                        ta.setAttribute('readonly', '');
+                        ta.style.position = 'fixed';
+                        ta.style.opacity = '0';
+                        ta.style.pointerEvents = 'none';
+                        document.body.appendChild(ta);
+                        ta.focus();
+                        ta.select();
+                        const ok = document.execCommand('copy');
+                        document.body.removeChild(ta);
+                        if (!ok) throw new Error('execCommand copy failed');
+                    }
                     showToast(`已复制 ${availableIpList.value.length} 条可用 IP`, 'success');
                 } catch (e) {
-                    showToast('复制失败，请检查浏览器剪贴板权限', 'error');
+                    showToast('复制失败：当前浏览器/页面环境不支持自动复制', 'error');
                 }
             };
 
@@ -699,7 +817,7 @@
 
             return {
                 currentTab, apiStatus, toasts, showToast,
-                sites, siteFilterServerId, fetchSites, deleteSite,
+                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs,
                 servers, showAddServerModal, addForm, submitAddServer, testServer, deleteServer, testingId,
                 tdks, showAddTdkModal, bulkTdkInput, parsedTdksCount, parseTdkLines, submitBulkTdk, deleteTdk, isSubmittingTdk,
                 templates, showUploadModal, uploadForm, isUploading, submitUpload, fileInput, deleteTemplate, uploadProgress, uploadedSizeText, totalSizeText, uploadSpeedText, closeUploadModal,

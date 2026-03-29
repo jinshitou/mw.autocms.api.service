@@ -7,6 +7,7 @@ from core.database import engine, Base
 import models.server
 import models.asset
 import models.site
+import models.site_log
 
 Base.metadata.create_all(bind=engine)
 
