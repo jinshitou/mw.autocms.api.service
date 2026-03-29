@@ -1,9 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routers import deploy, server, tdk, template
+from api.routers import deploy, server, tdk, template, site
 from core.database import engine, Base
 import models.server
 import models.asset
+import models.site
 
 Base.metadata.create_all(bind=engine)
 
@@ -26,6 +27,7 @@ app.include_router(deploy.router, prefix="/api/deploy", tags=["Deploy"])
 app.include_router(server.router, prefix="/api/servers", tags=["Servers"])
 app.include_router(tdk.router, prefix="/api/tdks", tags=["TDK Management"])
 app.include_router(template.router, prefix="/api/templates", tags=["Template Management"])
+app.include_router(site.router, prefix="/api/sites", tags=["Site Management"])
 
 @app.get("/")
 def health_check():

@@ -40,3 +40,16 @@ class OBSClient:
             # 打印错误方便排查
             print(f"生成签名链接失败: {e}")
             return ""
+
+    def upload_file_bytes(self, object_key: str, file_bytes: bytes) -> bool:
+        """上传字节流到OBS"""
+        try:
+            self.s3.put_object(
+                Bucket=settings.obs_bucket,
+                Key=object_key,
+                Body=file_bytes
+            )
+            return True
+        except Exception as e:
+            print(f"上传文件到OBS失败: {e}")
+            return False
