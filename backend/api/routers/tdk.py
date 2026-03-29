@@ -15,6 +15,16 @@ def create_tdk(tdk: TDKCreate, db: Session = Depends(get_db)):
     db.refresh(new_tdk)
     return new_tdk
 
+# 💡 新增：批量插入 TDK 接口
+@router.post("/batch", response_model=List[TDKResponse])
+def create_tdks_batch(tdks: List[TDKCreate], db: Session = Depends(get_db)):
+    new_tdks = [TDKConfig(**tdk.model_dump()) for tdk in tdks]
+    db.add_all(new_tdks)
+    db.commit()
+    for t in new_tdks:
+        db.refresh(t)
+    return new_tdks
+
 @router.get("/", response_model=List[TDKResponse])
 def get_tdks(db: Session = Depends(get_db)):
     return db.query(TDKConfig).order_by(TDKConfig.id.desc()).all()

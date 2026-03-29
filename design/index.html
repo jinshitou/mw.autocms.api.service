@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>批量易优 V2 - 企业级SEO站群系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        darkbg: '#111827', panelbg: '#1F2937', panelborder: '#374151',
+                        brand: '#3B82F6', brandhover: '#2563EB',
+                        danger: '#EF4444', success: '#10B981', warning: '#F59E0B'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #4B5563; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6B7280; }
+        body { font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        /* 侧边抽屉过渡动画 */
+        .drawer-enter-active, .drawer-leave-active { transition: transform 0.3s ease; }
+        .drawer-enter-from, .drawer-leave-to { transform: translateX(100%); }
+        /* Toast 提示动画 */
+        .toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
+        .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(-20px); }
+    </style>
+</head>
+<body class="bg-darkbg text-gray-200 h-screen overflow-hidden flex">
+
+<div id="app" class="flex h-full w-full relative">
+    
+    <div class="fixed top-5 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none">
+        <transition-group name="toast">
+            <div v-for="msg in toasts" :key="msg.id" :class="['px-4 py-2 rounded shadow-lg text-sm flex items-center', msg.type === 'success' ? 'bg-success text-white' : 'bg-danger text-white']">
+                <i :class="['fa-solid mr-2', msg.type === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation']"></i>
+                {{ msg.text }}
+            </div>
+        </transition-group>
+    </div>
+
+    <aside class="w-56 bg-panelbg border-r border-panelborder flex flex-col justify-between shrink-0 overflow-y-auto">
+        <div>
+            <div class="h-16 flex items-center px-6 border-b border-panelborder">
+                <i class="fa-solid fa-layer-group text-brand text-2xl"></i>
+                <span class="ml-3 font-bold text-lg tracking-widest text-white">批量易优</span>
+            </div>
+            
+            <div class="p-3 space-y-6">
+                <div v-for="group in menuGroups" :key="group.title">
+                    <div class="text-xs font-bold text-gray-500 mb-2 uppercase px-3">{{ group.title }}</div>
+                    <nav class="flex flex-col gap-1">
+                        <button v-for="item in group.items" :key="item.id" @click="currentTab = item.id" 
+                            :class="['px-3 py-2 rounded-lg flex items-center transition-colors text-sm', currentTab === item.id ? 'bg-brand/10 text-brand font-bold' : 'text-gray-400 hover:bg-panelborder hover:text-white']">
+                            <i :class="['fa-solid w-6 text-center', item.icon]"></i>
+                            <span class="ml-2">{{ item.name }}</span>
+                        </button>
+                    </nav>
+                </div>
+            </div>
+        </div>
+        
+        <div class="p-4 border-t border-panelborder flex items-center bg-gray-800/50">
+            <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-brand to-purple-500 flex items-center justify-center text-white font-bold text-xs">SA</div>
+            <div class="ml-3">
+                <div class="text-sm font-bold text-white">超级管理员</div>
+                <div class="text-[10px] text-gray-400">Google Auth</div>
+            </div>
+        </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col h-full overflow-hidden bg-darkbg">
+        
+        <header class="h-20 border-b border-panelborder bg-panelbg/50 flex items-center px-6 gap-6 shrink-0 overflow-x-auto shadow-sm">
+            <div class="text-sm font-bold text-gray-400 border-r border-panelborder pr-4 mr-2">全局服务器指标</div>
+            
+            <div class="flex items-center bg-darkbg border border-panelborder rounded p-2 min-w-[320px] shrink-0 hover:border-brand/50 transition-colors cursor-pointer">
+                <div class="flex-1">
+                    <div class="font-bold text-sm text-white">HK-Node-A <span class="text-xs text-gray-500 font-normal ml-1">(198.44.248.55)</span></div>
+                    <div class="text-[11px] text-gray-400 mt-1 flex gap-3">
+                        <span title="CPU使用率"><i class="fa-solid fa-microchip text-brand"></i> 48%</span>
+                        <span title="内存使用率"><i class="fa-solid fa-memory text-purple-400"></i> 16G</span>
+                        <span title="硬盘使用率"><i class="fa-solid fa-hard-drive text-blue-300"></i> 32%</span>
+                        <span title="已部署站点"><i class="fa-solid fa-globe text-emerald-400"></i> 128站</span>
+                    </div>
+                </div>
+                <div class="ml-3 flex flex-col items-end justify-center">
+                    <span class="text-success text-xs font-bold"><i class="fa-solid fa-signal"></i> 42ms</span>
+                    <span class="text-[10px] text-gray-500">拨测优良</span>
+                </div>
+            </div>
+
+            <div class="flex items-center bg-darkbg border border-panelborder rounded p-2 min-w-[320px] shrink-0 hover:border-brand/50 transition-colors cursor-pointer">
+                <div class="flex-1">
+                    <div class="font-bold text-sm text-white">HK-Node-B <span class="text-xs text-gray-500 font-normal ml-1">(45.197.32.18)</span></div>
+                    <div class="text-[11px] text-gray-400 mt-1 flex gap-3">
+                        <span><i class="fa-solid fa-microchip text-brand"></i> 92%</span>
+                        <span><i class="fa-solid fa-memory text-purple-400"></i> 30G</span>
+                        <span><i class="fa-solid fa-hard-drive text-blue-300"></i> 88%</span>
+                        <span><i class="fa-solid fa-globe text-emerald-400"></i> 210站</span>
+                    </div>
+                </div>
+                <div class="ml-3 flex flex-col items-end justify-center">
+                    <span class="text-danger text-xs font-bold"><i class="fa-solid fa-triangle-exclamation"></i> 超时</span>
+                    <span class="text-[10px] text-danger">拨测告警</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="flex-1 overflow-auto p-4 lg:p-6">
+            
+            <div v-show="currentTab === 'home'" class="h-full flex gap-4">
+                
+                <div class="flex-[3] bg-panelbg border border-panelborder rounded-lg flex flex-col overflow-hidden shadow-lg">
+                    <div class="p-3 border-b border-panelborder flex justify-between items-center bg-gray-800/80">
+                        <h2 class="font-bold text-sm text-white">当前站点列表</h2>
+                        <div class="flex gap-2">
+                            <select class="bg-darkbg border border-panelborder text-xs rounded px-3 py-1.5 outline-none focus:border-brand text-gray-300">
+                                <option>全部服务器</option>
+                                <option>HK-Node-A</option>
+                            </select>
+                            <button class="bg-panelborder hover:bg-gray-600 px-3 py-1.5 rounded text-xs transition-colors"><i class="fa-solid fa-rotate-right"></i> 刷新</button>
+                            <button @click="currentTab = 'bulk_deploy'" class="bg-brand hover:bg-brandhover text-white px-3 py-1.5 rounded text-xs font-bold shadow transition-colors"><i class="fa-solid fa-rocket mr-1"></i> 一键批量上站</button>
+                        </div>
+                    </div>
+                    
+                    <div class="p-2 border-b border-panelborder bg-darkbg/50 flex gap-2">
+                        <button class="bg-panelborder hover:bg-gray-600 px-3 py-1.5 rounded text-xs">修改 TDK</button>
+                        <button class="bg-panelborder hover:bg-gray-600 px-3 py-1.5 rounded text-xs">修改后台路径</button>
+                        <button class="bg-panelborder hover:bg-gray-600 px-3 py-1.5 rounded text-xs">重装/清理</button>
+                        <button class="bg-danger/20 text-danger border border-danger/50 hover:bg-danger/40 px-3 py-1.5 rounded text-xs ml-auto transition-colors">批量删除 (危险)</button>
+                    </div>
+
+                    <div class="flex-1 overflow-auto">
+                        <table class="w-full text-left text-[13px] whitespace-nowrap">
+                            <thead class="sticky top-0 bg-gray-800 text-gray-400 border-b border-panelborder shadow-sm z-10">
+                                <tr>
+                                    <th class="p-3 w-10"><input type="checkbox" class="rounded bg-darkbg"></th>
+                                    <th class="p-3">域名</th>
+                                    <th class="p-3">HTTPS</th>
+                                    <th class="p-3">绑定 IP</th>
+                                    <th class="p-3">标题(T)摘要</th>
+                                    <th class="p-3">蜘蛛(今日)</th>
+                                    <th class="p-3">模版</th>
+                                    <th class="p-3 text-right pr-6">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-panelborder">
+                                <tr class="hover:bg-gray-700/50 transition-colors" v-for="i in 15" :key="i">
+                                    <td class="p-3"><input type="checkbox" class="rounded bg-darkbg"></td>
+                                    <td class="p-3 font-medium text-brand hover:underline cursor-pointer">example-{{i}}.com</td>
+                                    <td class="p-3">
+                                        <span v-if="i%3 !== 0" class="text-success border border-success/30 bg-success/10 px-1.5 py-0.5 rounded text-[10px]">已配置</span>
+                                        <span v-else class="text-gray-500 border border-gray-600 bg-gray-800 px-1.5 py-0.5 rounded text-[10px]">未开启</span>
+                                    </td>
+                                    <td class="p-3 text-gray-400 font-mono text-xs">198.44.248.{{10+i}}</td>
+                                    <td class="p-3 text-gray-400 truncate max-w-[150px]" title="2026最新科技体育资讯平台">2026最新科技体育...</td>
+                                    <td class="p-3 text-emerald-400 font-bold"><i class="fa-brands fa-baidu mr-1"></i>{{ 120 * i }}</td>
+                                    <td class="p-3 text-gray-400 text-xs">Tech_Dark_V2</td>
+                                    <td class="p-3 text-right pr-4 space-x-3">
+                                        <button class="text-brand hover:text-white" title="SEO详情"><i class="fa-solid fa-chart-line"></i></button>
+                                        <button class="text-gray-400 hover:text-white" title="进入EyouCMS后台 (免密)"><i class="fa-solid fa-arrow-right-to-bracket"></i></button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="flex-1 bg-panelbg border border-panelborder rounded-lg flex flex-col max-w-[350px]">
+                    <div class="p-3 border-b border-panelborder flex justify-between items-center bg-gray-800/80">
+                        <h2 class="font-bold text-sm text-white"><i class="fa-solid fa-satellite-dish text-brand mr-2"></i>实时动态日志</h2>
+                        <button class="text-xs text-gray-500 hover:text-gray-300">清空</button>
+                    </div>
+                    <div class="flex-1 overflow-y-auto p-4 space-y-4">
+                        <div class="border-l-2 border-brand pl-3">
+                            <div class="text-[11px] text-gray-500 mb-0.5">10:45 AM | 批量上站</div>
+                            <div class="text-xs text-gray-200">HK-Node-A: 成功部署 12 个站点。</div>
+                        </div>
+                        <div class="border-l-2 border-danger pl-3 bg-danger/5 py-1 pr-1 rounded-r">
+                            <div class="text-[11px] text-danger mb-0.5 flex justify-between">
+                                <span>10:30 AM | 拨测告警</span>
+                                <i class="fa-brands fa-telegram text-blue-400" title="已推送TG"></i>
+                            </div>
+                            <div class="text-xs text-red-200">HK-Node-B 负载过高，Ping 延迟超 500ms。</div>
+                        </div>
+                        <div class="border-l-2 border-success pl-3">
+                            <div class="text-[11px] text-gray-500 mb-0.5">09:15 AM | 运维任务</div>
+                            <div class="text-xs text-gray-200">TDK全局更新完成，覆盖 45 个站点。</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div v-show="currentTab === 'bulk_deploy'" class="max-w-4xl mx-auto h-full overflow-y-auto pb-10">
+                <div class="flex items-center gap-3 mb-6">
+                    <button @click="currentTab = 'home'" class="text-gray-400 hover:text-white"><i class="fa-solid fa-arrow-left"></i> 返回</button>
+                    <h2 class="text-xl font-bold text-white">批量部署 EyouCMS 站点</h2>
+                </div>
+
+                <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg p-6 space-y-6">
+                    <div>
+                        <label class="block text-gray-300 text-sm font-bold mb-2">目标服务器</label>
+                        <select class="w-full bg-darkbg border border-panelborder rounded-md px-4 py-3 text-sm outline-none focus:border-brand">
+                            <option>HK-Node-A (198.44.248.55)</option>
+                            <option>HK-Node-B (45.197.32.18)</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="block text-gray-300 text-sm font-bold">单站域名与IP分配</label>
+                            <div class="flex gap-2">
+                                <button @click="showToast('已成功复制该服务器 24 个闲置可用 IP', 'success')" class="text-xs bg-darkbg border border-panelborder hover:border-brand text-gray-300 px-3 py-1.5 rounded transition-colors"><i class="fa-regular fa-copy mr-1"></i>复制空闲IP</button>
+                                <button @click="checkFormat" class="text-xs bg-darkbg border border-panelborder hover:border-brand text-brand px-3 py-1.5 rounded transition-colors"><i class="fa-solid fa-check-double mr-1"></i>批量预检查</button>
+                            </div>
+                        </div>
+                        <p class="text-[11px] text-gray-500 mb-2">输入格式必须为：<code class="text-brand">域名|IP</code>，每行一个。例如：example.com|198.44.248.56</p>
+                        <textarea v-model="deployText" class="w-full bg-darkbg border border-panelborder rounded-md px-4 py-3 h-40 text-sm font-mono text-gray-300 outline-none focus:border-brand" placeholder="domain1.com|198.44.248.55&#10;domain2.com|198.44.248.56"></textarea>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-gray-300 text-sm font-bold mb-2">站点模版</label>
+                            <button @click="openDrawer('template')" class="w-full bg-darkbg border border-dashed border-gray-500 hover:border-brand hover:text-brand rounded-md px-4 py-3 text-sm text-left flex justify-between items-center transition-colors">
+                                <span class="text-gray-300">{{ selectedTpl || '点击从右侧滑出选择模版...' }}</span>
+                                <i class="fa-solid fa-chevron-right text-gray-500"></i>
+                            </button>
+                        </div>
+                        <div>
+                            <label class="block text-gray-300 text-sm font-bold mb-2">配置 TDK 套件</label>
+                            <button @click="openDrawer('tdk')" class="w-full bg-darkbg border border-dashed border-gray-500 hover:border-brand hover:text-brand rounded-md px-4 py-3 text-sm text-left flex justify-between items-center transition-colors">
+                                <span class="text-gray-300 truncate" :title="selectedTdkDesc">{{ selectedTdk || '点击从右侧选择特定 TDK 套件...' }}</span>
+                                <i class="fa-solid fa-chevron-right text-gray-500"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-6 pt-4 border-t border-panelborder">
+                        <div>
+                            <label class="block text-gray-400 text-xs mb-1">主机头 (Host)</label>
+                            <input type="text" class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-sm outline-none" value="@,www">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 text-xs mb-1">PHP 版本</label>
+                            <select class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-sm outline-none">
+                                <option>7.4 (默认/推荐)</option>
+                                <option>8.2</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 text-xs mb-1">后台路径 (安全随机)</label>
+                            <input type="text" class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-sm text-brand font-mono outline-none" value="console_v8x2.php">
+                        </div>
+                    </div>
+
+                    <div class="pt-6">
+                        <button class="w-full bg-brand hover:bg-brandhover text-white font-bold py-3.5 rounded-lg shadow-[0_0_15px_rgba(59,130,246,0.3)] transition-all text-lg flex items-center justify-center">
+                            <i class="fa-solid fa-bolt mr-2"></i> 立即执行批量上站
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div v-show="!['home', 'bulk_deploy'].includes(currentTab)" class="h-full flex flex-col items-center justify-center text-gray-500">
+                <i class="fa-solid fa-person-digging text-5xl mb-4 text-gray-600"></i>
+                <p class="text-lg text-gray-400">正在进入 <span class="text-white font-bold">{{ currentTab }}</span> 模块</p>
+                <p class="text-sm mt-2">（此页面结构将在数据表设计完成后补充）</p>
+            </div>
+
+        </div>
+    </main>
+
+    <div v-if="drawer.isOpen" class="fixed inset-0 z-50 flex justify-end">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="closeDrawer"></div>
+        
+        <transition name="drawer" appear>
+            <div class="relative w-[450px] bg-panelbg h-full border-l border-panelborder shadow-2xl flex flex-col transform">
+                <div class="p-5 border-b border-panelborder flex justify-between items-center bg-gray-800">
+                    <h3 class="font-bold text-white text-lg">{{ drawer.type === 'template' ? '选择 EyouCMS 模版' : '选择特定 TDK 套件' }}</h3>
+                    <button @click="closeDrawer" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button>
+                </div>
+                
+                <div class="p-4 border-b border-panelborder bg-darkbg">
+                    <div class="relative">
+                        <i class="fa-solid fa-search absolute left-3 top-3 text-gray-500"></i>
+                        <input type="text" class="w-full bg-panelbg border border-panelborder rounded-md pl-9 pr-3 py-2 text-sm outline-none focus:border-brand" placeholder="搜索名称或备注...">
+                    </div>
+                </div>
+
+                <div v-if="drawer.type === 'template'" class="flex-1 overflow-y-auto p-4 space-y-3">
+                    <div v-for="i in 5" :key="'tpl'+i" @click="selectTpl('官方企业响应式_V'+i)" class="bg-darkbg border border-panelborder rounded-lg p-3 hover:border-brand cursor-pointer group transition-colors">
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="font-bold text-sm text-gray-200 group-hover:text-brand">官方企业响应式_V{{i}}</span>
+                            <span class="text-[10px] bg-brand/20 text-brand px-2 py-0.5 rounded">Zip</span>
+                        </div>
+                        <p class="text-xs text-gray-500 mb-3">包含完整移动端适配，自带测试数据。大小: 12MB</p>
+                        <div class="flex gap-2">
+                            <button class="text-[11px] text-gray-400 border border-gray-600 px-2 py-1 rounded hover:bg-gray-700" @click.stop="()=>{}">在新标签页预览</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="drawer.type === 'tdk'" class="flex-1 overflow-y-auto p-4 space-y-3">
+                    <div v-for="i in 5" :key="'tdk'+i" @click="selectTdk('体育资讯行业高收录TDK_组'+i, 'Title: 2026体育_xx资讯...')" class="bg-darkbg border border-panelborder rounded-lg p-3 hover:border-brand cursor-pointer group transition-colors relative">
+                        <h4 class="font-bold text-sm text-gray-200 group-hover:text-brand mb-1">体育资讯行业高收录TDK_组{{i}}</h4>
+                        <div class="text-xs text-gray-500 truncate" title="T: 2026体育赛事直播_最新体育新闻网&#10;D: 提供全网最快最全的体育赛事比分直播...&#10;K: 体育直播,足球比分,篮球录像">
+                            T: 2026体育赛事直播_最新体育新闻网... <span class="text-brand underline cursor-help ml-1">Hover预览完整</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </transition>
+    </div>
+
+</div>
+
+<script>
+    const { createApp, ref, reactive } = Vue;
+
+    createApp({
+        setup() {
+            // 当前选中的侧边栏菜单
+            const currentTab = ref('home');
+            
+            // 侧边栏分级数据
+            const menuGroups = ref([
+                {
+                    title: 'SEO管理 (核心)',
+                    items: [
+                        { id: 'home', name: '站点管理 (首页)', icon: 'fa-house' },
+                        { id: 'bulk_deploy', name: '批量一键上站', icon: 'fa-rocket' },
+                        { id: 'tdk_mgt', name: 'TDK库与黑名单', icon: 'fa-tags' },
+                        { id: 'scrape_mgt', name: '采集与AI管理', icon: 'fa-spider' },
+                        { id: 'tpl_mgt', name: 'EyouCMS模版库', icon: 'fa-file-code' },
+                        { id: 'seo_monitor', name: 'SEO数据报表', icon: 'fa-chart-line' }
+                    ]
+                },
+                {
+                    title: '日志与大屏',
+                    items: [
+                        { id: 'ops_screen', name: '全盘运维大屏', icon: 'fa-chart-pie' },
+                        { id: 'seo_screen', name: '排名收录大屏', icon: 'fa-display' },
+                        { id: 'action_logs', name: '系统操作日志', icon: 'fa-list-check' }
+                    ]
+                },
+                {
+                    title: '基础设施与配置',
+                    items: [
+                        { id: 'server_mgt', name: '服务器资源池', icon: 'fa-server' },
+                        { id: 'auth_mgt', name: '用户与角色分配', icon: 'fa-users-gear' }
+                    ]
+                }
+            ]);
+
+            // Toast 提示逻辑
+            const toasts = ref([]);
+            const showToast = (text, type = 'success') => {
+                const id = Date.now();
+                toasts.value.push({ id, text, type });
+                setTimeout(() => {
+                    toasts.value = toasts.value.filter(t => t.id !== id);
+                }, 3000);
+            };
+
+            // 批量上站表单逻辑
+            const deployText = ref('');
+            const checkFormat = () => {
+                if(!deployText.value) return showToast('请输入域名信息', 'error');
+                const lines = deployText.value.split('\n').filter(l => l.trim());
+                const isValid = lines.every(line => /^.+\|.+$/.test(line.trim()));
+                if(isValid) {
+                    showToast(`格式验证通过，共识别 ${lines.length} 个站点配置`, 'success');
+                } else {
+                    showToast('格式错误：存在不符合 "域名|IP" 格式的行', 'error');
+                }
+            };
+
+            // 抽屉 (Drawer) 逻辑
+            const drawer = reactive({ isOpen: false, type: '' });
+            const selectedTpl = ref('');
+            const selectedTdk = ref('');
+            const selectedTdkDesc = ref('');
+
+            const openDrawer = (type) => { drawer.type = type; drawer.isOpen = true; };
+            const closeDrawer = () => { drawer.isOpen = false; };
+            
+            const selectTpl = (name) => { selectedTpl.value = name; closeDrawer(); };
+            const selectTdk = (name, desc) => { selectedTdk.value = name; selectedTdkDesc.value = desc; closeDrawer(); };
+
+            return {
+                currentTab, menuGroups,
+                toasts, showToast,
+                deployText, checkFormat,
+                drawer, openDrawer, closeDrawer,
+                selectedTpl, selectTpl,
+                selectedTdk, selectedTdkDesc, selectTdk
+            };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
