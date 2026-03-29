@@ -23,8 +23,8 @@ class OBSClient:
             aws_secret_access_key=settings.obs_sk,
             config=Config(
                 signature_version='s3v4',
-                # OBS 在 path-style 下通常更稳定
-                s3={'addressing_style': 'path'}
+                # 华为云 OBS 在很多区域要求 virtual-host 访问桶
+                s3={'addressing_style': 'virtual'}
             )
         )
 
@@ -52,9 +52,18 @@ class OBSClient:
         if not settings.obs_ak or not settings.obs_sk:
             raise RuntimeError("OBS_AK / OBS_SK 未配置")
 
-        self.s3.put_object(
-            Bucket=self.bucket,
-            Key=object_key,
-            Body=file_bytes
-        )
-        return True
+        try:
+            self.s3.put_object(
+                Bucket=self.bucket,
+                Key=object_key,
+                Body=file_bytes
+            )
+            return True
+        except Exception as e:
+            msg = str(e)
+            if "VirtualHostDomainRequired" in msg:
+                raise RuntimeError(
+                    "OBS 需要 virtual-host 域名访问。请确认 OBS_ENDPOINT 为区域域名（例如 "
+                    "https://obs.ap-southeast-1.myhuaweicloud.com），且未填桶名子域。"
+                )
+            raise
