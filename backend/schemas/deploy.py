@@ -6,9 +6,12 @@ class SiteItem(BaseModel):
     bind_ip: str
 
 class DeployRequest(BaseModel):
-    server_id: int  # <-- 核心改动：前端现在只传服务器 ID
+    server_id: int
     sites: List[SiteItem]
-    template_key: str = "eyoucms_core.zip"
+    # 核心改动：分离出核心包和模板包的路径参数
+    core_key: str = "eyoucms/eyoucore/EyouCMS-V1.7.8-UTF8-SP1_0125.zip"
+    template_key: str = "eyoucms/core/eyouz070.zip"
+    
     tdk_config: Dict[str, str] = {
         "title": "2026全新科技企业官网",
         "keywords": "科技,企业,官网",
