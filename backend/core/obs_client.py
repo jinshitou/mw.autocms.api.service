@@ -4,23 +4,27 @@ from core.config import settings
 
 class OBSClient:
     def __init__(self):
-        # 修正 1: 确保配置里的 endpoint 带有 https://
-        endpoint = settings.obs_endpoint
+        # 兼容 .env 中可能出现的注释或多余空格，避免 endpoint 解析异常
+        endpoint = (settings.obs_endpoint or "").split("#", 1)[0].strip().strip("'\"")
+        if not endpoint:
+            endpoint = f"obs.{settings.obs_region}.myhuaweicloud.com"
         if not endpoint.startswith('http'):
             endpoint = f"https://{endpoint}"
 
-        # 华为 OBS 完美兼容 AWS S3 协议
+        region = (settings.obs_region or "").strip() or "ap-southeast-1"
+        self.bucket = (settings.obs_bucket or "").strip()
+
+        # 华为 OBS 兼容 AWS S3 协议
         self.s3 = boto3.client(
             's3',
-            # 修正 2: 必须指定 region_name，香港是 ap-southeast-1
-            region_name='ap-southeast-1', 
+            region_name=region,
             endpoint_url=endpoint,
             aws_access_key_id=settings.obs_ak,
             aws_secret_access_key=settings.obs_sk,
             config=Config(
                 signature_version='s3v4',
-                # 修正 3: 强制使用路径风格访问（可选，但更稳健）
-                s3={'addressing_style': 'virtual'} 
+                # OBS 在 path-style 下通常更稳定
+                s3={'addressing_style': 'path'}
             )
         )
 
@@ -30,7 +34,7 @@ class OBSClient:
             url = self.s3.generate_presigned_url(
                 'get_object',
                 Params={
-                    'Bucket': settings.obs_bucket, 
+                    'Bucket': self.bucket,
                     'Key': object_key
                 },
                 ExpiresIn=expiration
@@ -43,13 +47,14 @@ class OBSClient:
 
     def upload_file_bytes(self, object_key: str, file_bytes: bytes) -> bool:
         """上传字节流到OBS"""
-        try:
-            self.s3.put_object(
-                Bucket=settings.obs_bucket,
-                Key=object_key,
-                Body=file_bytes
-            )
-            return True
-        except Exception as e:
-            print(f"上传文件到OBS失败: {e}")
-            return False
+        if not self.bucket:
+            raise RuntimeError("OBS_BUCKET 未配置")
+        if not settings.obs_ak or not settings.obs_sk:
+            raise RuntimeError("OBS_AK / OBS_SK 未配置")
+
+        self.s3.put_object(
+            Bucket=self.bucket,
+            Key=object_key,
+            Body=file_bytes
+        )
+        return True

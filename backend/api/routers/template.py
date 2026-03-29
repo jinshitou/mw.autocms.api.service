@@ -21,6 +21,8 @@ async def upload_template(
 ):
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="只允许上传 .zip")
+    if pkg_type not in {"core", "theme"}:
+        raise HTTPException(status_code=400, detail="pkg_type 仅支持 core 或 theme")
     
     folder = "eyoucms/core" if pkg_type == "core" else "eyoucms/muban"
     safe_filename = f"{uuid.uuid4().hex[:8]}_{file.filename}"
@@ -29,10 +31,11 @@ async def upload_template(
     file_bytes = await file.read()
     
     # 💡 优化：把同步的 OBS 上传扔到线程池，防止阻塞 FastAPI 导致超时
-    success = await run_in_threadpool(obs_client.upload_file_bytes, obs_key, file_bytes)
-    
-    if not success:
-        raise HTTPException(status_code=500, detail="上传 OBS 失败")
+    try:
+        await run_in_threadpool(obs_client.upload_file_bytes, obs_key, file_bytes)
+    except Exception as e:
+        # 把真实错误返回给前端，便于快速定位配置问题
+        raise HTTPException(status_code=500, detail=f"上传 OBS 失败: {e}")
     
     new_template = TemplatePackage(name=name, pkg_type=pkg_type, obs_path=obs_key)
     db.add(new_template)

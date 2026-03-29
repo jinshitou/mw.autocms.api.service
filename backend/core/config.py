@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     
     # 华为云 OBS
     obs_endpoint: str = ""
+    obs_region: str = "ap-southeast-1"
     obs_ak: str = ""
     obs_sk: str = ""
     obs_bucket: str = ""

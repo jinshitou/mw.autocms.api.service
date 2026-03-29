@@ -1,5 +1,7 @@
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from api.routers import deploy, server, tdk, template, site
 from core.database import engine, Base
 import models.server
@@ -30,5 +32,20 @@ app.include_router(template.router, prefix="/api/templates", tags=["Template Man
 app.include_router(site.router, prefix="/api/sites", tags=["Site Management"])
 
 @app.get("/")
+def frontend_or_health():
+    # 兼容两种运行方式：
+    # 1) Docker: 把 fronttype 挂载到 /fronttype
+    # 2) 本机: 项目根目录的 fronttype/index.html
+    candidate_paths = [
+        Path("/fronttype/index.html"),
+        Path(__file__).resolve().parents[1] / "fronttype" / "index.html"
+    ]
+    for path in candidate_paths:
+        if path.exists():
+            return FileResponse(path)
+
+    return {"status": "success", "message": "fronttype/index.html 未找到"}
+
+@app.get("/health")
 def health_check():
     return {"status": "success"}
