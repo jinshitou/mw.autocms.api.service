@@ -83,6 +83,30 @@ class DeployEngine:
         php_db_pass = db_pass.replace("\\", "\\\\").replace("'", "\\'")
         sql_path = f"/tmp/{db_name}_autocms.sql"
         esc_sql_path = shlex.quote(sql_path)
+        mysql_query_seq = {"n": 0}
+
+        async def run_mysql_query(stage, title, sql, timeout_sec=60):
+            mysql_query_seq["n"] += 1
+            qpath = f"/tmp/{db_name}_autocms_q_{mysql_query_seq['n']}.sql"
+            esc_qpath = shlex.quote(qpath)
+            sql_text = (sql or "").strip() + "\n"
+            sql_b64 = base64.b64encode(sql_text.encode("utf-8")).decode("ascii")
+            return await run_timed_step(
+                stage,
+                title,
+                execute_remote_cmd(
+                    self.server_ip,
+                    self.ssh_port,
+                    (
+                        "bash -lc 'set -euo pipefail; "
+                        f"printf %s {sql_b64} | base64 -d > {esc_qpath}; "
+                        f"mysql --connect-timeout=20 -N -u{esc_db_user} -p{esc_db_pass} {esc_db_name} < {esc_qpath}; "
+                        f"rm -f {esc_qpath}'"
+                    ),
+                    timeout_sec=timeout_sec
+                ),
+                timeout_sec=timeout_sec
+            )
 
         await run_timed_step(
             "ssh_prepare",
@@ -183,20 +207,7 @@ class DeployEngine:
             return None
 
         # 初始化后台管理员账号密码（必须成功）。
-        table_raw = await run_timed_step(
-            "ssh_admin_probe",
-            "SSH：探测后台管理员表",
-            execute_remote_cmd(
-                self.server_ip,
-                self.ssh_port,
-                (
-                    "bash -lc 'set -euo pipefail; "
-                    f"mysql --connect-timeout=20 -u{esc_db_user} -p{esc_db_pass} {esc_db_name} "
-                    "-Nse \"SHOW TABLES;\"'"
-                ),
-                timeout_sec=60
-            )
-        )
+        table_raw = await run_mysql_query("ssh_admin_probe", "SSH：探测后台管理员表", "SHOW TABLES;", timeout_sec=60)
         table_list = [line.strip() for line in (table_raw or "").splitlines() if line.strip()]
         admin_table = None
         preferred_tables = ["ey_admin", "tp_admin", "admin"]
@@ -214,21 +225,17 @@ class DeployEngine:
         if not re.match(r"^[A-Za-z0-9_]+$", admin_table):
             raise Exception(f"初始化后台账号失败：管理员表名非法 {admin_table}")
 
-        admin_cols_raw = await run_timed_step(
+        admin_cols_raw = await run_mysql_query(
             "ssh_admin_probe",
             "SSH：探测管理员表结构",
-            execute_remote_cmd(
-                self.server_ip,
-                self.ssh_port,
-                (
-                    "bash -lc 'set -euo pipefail; "
-                    f"mysql --connect-timeout=20 -u{esc_db_user} -p{esc_db_pass} {esc_db_name} "
-                    f"-Nse \"SHOW COLUMNS FROM {admin_table};\" | awk \"{{print \\$1}}\"'"
-                ),
-                timeout_sec=60
-            )
+            f"SHOW COLUMNS FROM {admin_table};",
+            timeout_sec=60
         )
-        admin_cols = {line.strip() for line in (admin_cols_raw or "").splitlines() if line.strip()}
+        admin_cols = {
+            line.split("\t", 1)[0].strip()
+            for line in (admin_cols_raw or "").splitlines()
+            if line.strip()
+        }
         if not admin_cols:
             raise Exception(f"初始化后台账号失败：{admin_table} 无字段信息")
         for c in admin_cols:
@@ -244,19 +251,11 @@ class DeployEngine:
                 f"初始化后台账号失败：管理员表字段不兼容（需账号/密码列），当前字段: {','.join(sorted(admin_cols))}"
             )
 
-        admin_count_raw = await run_timed_step(
+        admin_count_raw = await run_mysql_query(
             "ssh_admin_probe",
             "SSH：检查管理员记录数量",
-            execute_remote_cmd(
-                self.server_ip,
-                self.ssh_port,
-                (
-                    "bash -lc 'set -euo pipefail; "
-                    f"mysql --connect-timeout=20 -u{esc_db_user} -p{esc_db_pass} {esc_db_name} "
-                    f"-Nse \"SELECT COUNT(1) FROM {admin_table};\"'"
-                ),
-                timeout_sec=60
-            )
+            f"SELECT COUNT(1) FROM {admin_table};",
+            timeout_sec=60
         )
         try:
             admin_count = int((admin_count_raw or "0").strip().splitlines()[0])
@@ -278,36 +277,10 @@ class DeployEngine:
         order_sql = f" ORDER BY {id_col} ASC" if id_col else ""
         admin_update_sql = f"UPDATE {admin_table} SET {set_sql}{order_sql} LIMIT 1;"
 
-        await run_timed_step(
-            "ssh_admin_init",
-            "SSH：初始化后台账号密码",
-            execute_remote_cmd(
-                self.server_ip,
-                self.ssh_port,
-                (
-                    "bash -lc 'set -euo pipefail; "
-                    f"mysql --connect-timeout=20 -u{esc_db_user} -p{esc_db_pass} {esc_db_name} "
-                    f"-Nse \"{admin_update_sql}\"'"
-                ),
-                timeout_sec=90
-            )
-        )
+        await run_mysql_query("ssh_admin_init", "SSH：初始化后台账号密码", admin_update_sql, timeout_sec=90)
 
         admin_verify_sql = f"SELECT {user_col} FROM {admin_table}{order_sql} LIMIT 1;"
-        admin_verify_raw = await run_timed_step(
-            "ssh_admin_verify",
-            "SSH：校验后台账号初始化结果",
-            execute_remote_cmd(
-                self.server_ip,
-                self.ssh_port,
-                (
-                    "bash -lc 'set -euo pipefail; "
-                    f"mysql --connect-timeout=20 -u{esc_db_user} -p{esc_db_pass} {esc_db_name} "
-                    f"-Nse \"{admin_verify_sql}\"'"
-                ),
-                timeout_sec=60
-            )
-        )
+        admin_verify_raw = await run_mysql_query("ssh_admin_verify", "SSH：校验后台账号初始化结果", admin_verify_sql, timeout_sec=60)
         verify_username = (admin_verify_raw or "").strip().splitlines()[0] if (admin_verify_raw or "").strip() else ""
         if verify_username != admin_username:
             raise Exception(f"后台账号初始化校验失败，期望 {admin_username}，实际 {verify_username or '空'}")
@@ -317,21 +290,12 @@ class DeployEngine:
         # 注意：按当前业务要求，TDK 注入失败即视为部署失败。
         tdk_sql_path = f"/tmp/{db_name}_autocms_tdk.sql"
         esc_tdk_sql_path = shlex.quote(tdk_sql_path)
-        columns_raw = await run_timed_step(
-            "ssh_tdk_probe",
-            "SSH：探测 ey_config 表结构",
-            execute_remote_cmd(
-                self.server_ip,
-                self.ssh_port,
-                (
-                    "bash -lc 'set -euo pipefail; "
-                    f"mysql --connect-timeout=20 -u{esc_db_user} -p{esc_db_pass} {esc_db_name} "
-                    "-Nse \"SHOW COLUMNS FROM ey_config;\" | awk \"{print \\$1}\"'"
-                ),
-                timeout_sec=60
-            )
-        )
-        columns = {line.strip().strip("`") for line in columns_raw.splitlines() if line.strip()}
+        columns_raw = await run_mysql_query("ssh_tdk_probe", "SSH：探测 ey_config 表结构", "SHOW COLUMNS FROM ey_config;", timeout_sec=60)
+        columns = {
+            line.split("\t", 1)[0].strip().strip("`")
+            for line in (columns_raw or "").splitlines()
+            if line.strip()
+        }
         if not columns:
             raise Exception("探测 ey_config 失败：未读取到任何字段")
 
@@ -340,19 +304,11 @@ class DeployEngine:
         value_col = pick_first(["value", "config_value", "val"], columns)
         tdk_sql_content = ""
         if key_col and value_col:
-            keys_raw = await run_timed_step(
+            keys_raw = await run_mysql_query(
                 "ssh_tdk_probe",
                 "SSH：探测 ey_config 键名",
-                execute_remote_cmd(
-                    self.server_ip,
-                    self.ssh_port,
-                    (
-                        "bash -lc 'set -euo pipefail; "
-                        f"mysql --connect-timeout=20 -u{esc_db_user} -p{esc_db_pass} {esc_db_name} "
-                        f"-Nse \"SELECT \\`{key_col}\\` FROM ey_config;\"'"
-                    ),
-                    timeout_sec=60
-                )
+                f"SELECT `{key_col}` FROM ey_config;",
+                timeout_sec=60
             )
             keys = {line.strip() for line in keys_raw.splitlines() if line.strip()}
 
@@ -407,20 +363,7 @@ class DeployEngine:
                 f"SELECT `{key_col}`, `{value_col}` FROM ey_config "
                 f"WHERE `{key_col}` IN ('{title_key}','{keywords_key}','{desc_key}');"
             )
-            verify_raw = await run_timed_step(
-                "ssh_tdk_verify",
-                "SSH：校验 TDK 注入结果",
-                execute_remote_cmd(
-                    self.server_ip,
-                    self.ssh_port,
-                    (
-                        "bash -lc 'set -euo pipefail; "
-                        f"mysql --connect-timeout=20 -u{esc_db_user} -p{esc_db_pass} {esc_db_name} "
-                        f"-Nse \"{verify_sql}\"'"
-                    ),
-                    timeout_sec=60
-                )
-            )
+            verify_raw = await run_mysql_query("ssh_tdk_verify", "SSH：校验 TDK 注入结果", verify_sql, timeout_sec=60)
             kv = {}
             for line in (verify_raw or "").splitlines():
                 parts = line.split("\t", 1)
@@ -437,20 +380,7 @@ class DeployEngine:
             verify_sql = (
                 f"SELECT `{title_col}`, `{keywords_col}`, `{desc_col}` FROM ey_config LIMIT 1;"
             )
-            verify_raw = await run_timed_step(
-                "ssh_tdk_verify",
-                "SSH：校验 TDK 注入结果",
-                execute_remote_cmd(
-                    self.server_ip,
-                    self.ssh_port,
-                    (
-                        "bash -lc 'set -euo pipefail; "
-                        f"mysql --connect-timeout=20 -u{esc_db_user} -p{esc_db_pass} {esc_db_name} "
-                        f"-Nse \"{verify_sql}\"'"
-                    ),
-                    timeout_sec=60
-                )
-            )
+            verify_raw = await run_mysql_query("ssh_tdk_verify", "SSH：校验 TDK 注入结果", verify_sql, timeout_sec=60)
             line = (verify_raw or "").strip().splitlines()
             if not line:
                 raise Exception("TDK 校验失败：未读到 ey_config 内容")
