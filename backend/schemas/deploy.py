@@ -13,3 +13,5 @@ class DeployRequest(BaseModel):
     tdk_config: Dict[str, str]
     admin_path: str
     host_headers: List[str] = ["@", "www"]
+    force_redeploy: bool = False
+    retry_limit: int = 1

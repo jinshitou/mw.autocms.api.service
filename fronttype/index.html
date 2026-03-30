@@ -31,8 +31,8 @@
     
     <div class="fixed top-5 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none">
         <transition-group name="toast">
-            <div v-for="msg in toasts" :key="msg.id" :class="['px-4 py-2 rounded shadow-lg text-sm flex items-center', msg.type === 'success' ? 'bg-success text-white' : (msg.type === 'error' ? 'bg-danger text-white' : 'bg-brand text-white')]">
-                <i :class="['fa-solid mr-2', msg.type === 'success' ? 'fa-circle-check' : (msg.type === 'error' ? 'fa-circle-exclamation' : 'fa-spinner fa-spin')]"></i>
+            <div v-for="msg in toasts" :key="msg.id" :class="['px-4 py-2 rounded shadow-lg text-sm flex items-center', msg.type === 'success' ? 'bg-success text-white' : (msg.type === 'error' ? 'bg-danger text-white' : (msg.type === 'warning' ? 'bg-warning text-black' : 'bg-brand text-white'))]">
+                <i :class="['fa-solid mr-2', msg.type === 'success' ? 'fa-circle-check' : (msg.type === 'error' ? 'fa-circle-exclamation' : (msg.type === 'warning' ? 'fa-triangle-exclamation' : 'fa-spinner fa-spin'))]"></i>
                 {{ msg.text }}
             </div>
         </transition-group>
@@ -245,6 +245,10 @@
                                     <label class="block text-gray-300 text-xs font-bold mb-1">后台安全入口路径</label>
                                     <input v-model="deployForm.adminPath" type="text" class="w-full bg-darkbg border border-panelborder rounded px-4 py-3 text-sm text-gray-300 outline-none focus:border-brand" placeholder="如：console_v8x.php">
                                 </div>
+                                <div>
+                                    <label class="block text-gray-300 text-xs font-bold mb-1">失败重试次数（0-5）</label>
+                                    <input v-model.number="deployForm.retryLimit" type="number" min="0" max="5" class="w-full bg-darkbg border border-panelborder rounded px-4 py-3 text-sm text-gray-300 outline-none focus:border-brand" placeholder="默认 1 次">
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -387,10 +391,19 @@
                         <span>{{ uploadedSizeText }} / {{ totalSizeText }}</span>
                         <span>速度：{{ uploadSpeedText }}</span>
                     </div>
+                    <div v-if="isUploading" class="mt-1 text-[11px] text-gray-500">
+                        第 {{ currentUploadAttempt }} / {{ uploadRetryLimit + 1 }} 次尝试
+                    </div>
                 </div>
             </div>
             <div class="px-6 py-4 border-t border-panelborder flex justify-end gap-3">
                 <button @click="closeUploadModal" :disabled="isUploading" class="text-gray-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed">取消</button>
+                <button v-if="isUploading" @click="cancelUpload" class="text-warning border border-warning/50 bg-warning/10 px-4 py-2 rounded font-bold hover:bg-warning/20">
+                    中止上传
+                </button>
+                <button v-else-if="uploadLastFailed && hasRetryUploadPayload" @click="retryLastUpload" class="text-brand border border-brand/50 bg-brand/10 px-4 py-2 rounded font-bold hover:bg-brand/20">
+                    重试上次上传
+                </button>
                 <button @click="submitUpload" :disabled="isUploading" class="bg-brand text-white px-4 py-2 rounded font-bold disabled:opacity-50">
                     <i :class="['fa-solid mr-1', isUploading ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up']"></i> {{ isUploading ? '大包直传中(防阻塞)...' : '开始上传' }}
                 </button>
@@ -731,6 +744,11 @@
             const uploadedBytes = ref(0);
             const uploadTotalBytes = ref(0);
             const uploadSpeed = ref(0);
+            const uploadRetryLimit = ref(2);
+            const currentUploadAttempt = ref(0);
+            const uploadAbortController = ref(null);
+            const uploadLastFailed = ref(false);
+            const uploadLastPayload = ref(null);
             const fileInput = ref(null);
             const uploadForm = reactive({ name: '', pkg_type: 'core' });
             const fetchTemplates = async () => { try { templates.value = await ax.get('/templates/'); } catch(e){} };
@@ -748,64 +766,149 @@
             const uploadedSizeText = computed(() => formatBytes(uploadedBytes.value));
             const totalSizeText = computed(() => formatBytes(uploadTotalBytes.value));
             const uploadSpeedText = computed(() => uploadSpeed.value > 0 ? `${formatBytes(uploadSpeed.value)}/s` : '--');
+            const hasRetryUploadPayload = computed(() => !!uploadLastPayload.value?.file && !!uploadLastPayload.value?.name);
             const resetUploadState = () => {
                 uploadProgress.value = 0;
                 uploadedBytes.value = 0;
                 uploadTotalBytes.value = 0;
                 uploadSpeed.value = 0;
+                currentUploadAttempt.value = 0;
             };
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
             const closeUploadModal = () => {
                 if (isUploading.value) return;
                 showUploadModal.value = false;
                 resetUploadState();
             };
-            const submitUpload = async () => {
-                if(!fileInput.value.files[0] || !uploadForm.name) return showToast('请填写名称并选择文件', 'error');
-                const selectedFile = fileInput.value.files[0];
-                const formData = new FormData();
-                formData.append('file', selectedFile);
-                formData.append('name', uploadForm.name);
-                formData.append('pkg_type', uploadForm.pkg_type);
-                
+            const cancelUpload = () => {
+                if (!isUploading.value || !uploadAbortController.value) return;
+                uploadAbortController.value.abort();
+                showToast('已取消当前上传', 'warning');
+            };
+            const runUploadAttempt = async (payload, attemptNo) => {
                 resetUploadState();
-                uploadTotalBytes.value = selectedFile.size || 0;
+                currentUploadAttempt.value = attemptNo;
+                uploadTotalBytes.value = payload.file.size || 0;
+                const formData = new FormData();
+                formData.append('file', payload.file);
+                formData.append('name', payload.name);
+                formData.append('pkg_type', payload.pkg_type);
+                uploadAbortController.value = new AbortController();
+                let lastLoaded = 0;
+                let lastAt = Date.now();
+                await ax.post('/templates/upload', formData, {
+                    signal: uploadAbortController.value.signal,
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                    onUploadProgress: (evt) => {
+                        const loaded = evt.loaded || 0;
+                        const total = evt.total || uploadTotalBytes.value || 0;
+                        uploadedBytes.value = loaded;
+                        uploadTotalBytes.value = total;
+                        uploadProgress.value = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+
+                        const now = Date.now();
+                        const seconds = (now - lastAt) / 1000;
+                        const delta = loaded - lastLoaded;
+                        if (seconds > 0 && delta >= 0) uploadSpeed.value = delta / seconds;
+                        lastLoaded = loaded;
+                        lastAt = now;
+                    }
+                });
+            };
+            const submitUpload = async () => {
+                if (isUploading.value) return;
+                const selectedFile = fileInput.value?.files?.[0];
+                if(!selectedFile || !uploadForm.name) return showToast('请填写名称并选择文件', 'error');
+                const payload = { file: selectedFile, name: uploadForm.name, pkg_type: uploadForm.pkg_type };
+                uploadLastPayload.value = payload;
+                uploadLastFailed.value = false;
                 isUploading.value = true;
                 try {
-                    let lastLoaded = 0;
-                    let lastAt = Date.now();
-                    await ax.post('/templates/upload', formData, {
-                        headers: { 'Content-Type': 'multipart/form-data' },
-                        onUploadProgress: (evt) => {
-                            const loaded = evt.loaded || 0;
-                            const total = evt.total || uploadTotalBytes.value || 0;
-                            uploadedBytes.value = loaded;
-                            uploadTotalBytes.value = total;
-                            uploadProgress.value = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
-
-                            const now = Date.now();
-                            const seconds = (now - lastAt) / 1000;
-                            const delta = loaded - lastLoaded;
-                            if (seconds > 0 && delta >= 0) uploadSpeed.value = delta / seconds;
-                            lastLoaded = loaded;
-                            lastAt = now;
+                    for (let attempt = 1; attempt <= uploadRetryLimit.value + 1; attempt++) {
+                        try {
+                            await runUploadAttempt(payload, attempt);
+                            break;
+                        } catch (e) {
+                            const cancelled = e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError' || String(e || '').includes('canceled');
+                            if (cancelled) throw e;
+                            if (attempt <= uploadRetryLimit.value) {
+                                const delayMs = Math.min(3000, 500 * (2 ** (attempt - 1)));
+                                showToast(`上传失败，${(delayMs / 1000).toFixed(1)}s 后自动重试（${attempt}/${uploadRetryLimit.value}）`, 'warning');
+                                await sleep(delayMs);
+                                continue;
+                            }
+                            throw e;
                         }
-                    });
+                    }
                     uploadProgress.value = 100;
                     showToast('大包已成功直传至华为云 OBS！', 'success');
                     showUploadModal.value = false;
                     fileInput.value.value = ''; 
                     uploadForm.name = '';
+                    uploadLastFailed.value = false;
+                    uploadLastPayload.value = null;
                     resetUploadState();
                     fetchTemplates();
-                } catch(e) { showToast(e, 'error'); }
-                finally { isUploading.value = false; }
+                } catch(e) {
+                    const cancelled = e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError' || String(e || '').includes('canceled');
+                    if (!cancelled) {
+                        uploadLastFailed.value = true;
+                        showToast(e, 'error');
+                    }
+                } finally {
+                    uploadAbortController.value = null;
+                    isUploading.value = false;
+                }
+            };
+            const retryLastUpload = async () => {
+                if (!uploadLastPayload.value) return;
+                const payload = uploadLastPayload.value;
+                if (payload.name) uploadForm.name = payload.name;
+                if (payload.pkg_type) uploadForm.pkg_type = payload.pkg_type;
+                isUploading.value = true;
+                uploadLastFailed.value = false;
+                try {
+                    for (let attempt = 1; attempt <= uploadRetryLimit.value + 1; attempt++) {
+                        try {
+                            await runUploadAttempt(payload, attempt);
+                            break;
+                        } catch (e) {
+                            const cancelled = e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError' || String(e || '').includes('canceled');
+                            if (cancelled) throw e;
+                            if (attempt <= uploadRetryLimit.value) {
+                                const delayMs = Math.min(3000, 500 * (2 ** (attempt - 1)));
+                                showToast(`上传失败，${(delayMs / 1000).toFixed(1)}s 后自动重试（${attempt}/${uploadRetryLimit.value}）`, 'warning');
+                                await sleep(delayMs);
+                                continue;
+                            }
+                            throw e;
+                        }
+                    }
+                    uploadProgress.value = 100;
+                    showToast('重试上传成功', 'success');
+                    showUploadModal.value = false;
+                    if (fileInput.value) fileInput.value.value = '';
+                    uploadLastFailed.value = false;
+                    uploadLastPayload.value = null;
+                    resetUploadState();
+                    fetchTemplates();
+                } catch (e) {
+                    const cancelled = e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError' || String(e || '').includes('canceled');
+                    if (!cancelled) {
+                        uploadLastFailed.value = true;
+                        showToast(e, 'error');
+                    }
+                } finally {
+                    uploadAbortController.value = null;
+                    isUploading.value = false;
+                }
             };
             const deleteTemplate = async (id) => { if(confirm('确认删除?')) { try { await ax.delete(`/templates/${id}`); fetchTemplates(); deployForm.selectedCore = null; deployForm.selectedTheme = null;} catch(e){} } };
 
             // ---- 批量建站控制台 ----
             const activeDrawer = ref(null);
             const hostHeaderOptions = ['@', 'www', 'm'];
-            const deployForm = reactive({ serverId: '', domainsText: '', adminPath: 'console_v8x.php', selectedCore: null, selectedTheme: null, selectedTdk: null, hostHeaders: ['@', 'www'] });
+            const deployForm = reactive({ serverId: '', domainsText: '', adminPath: 'console_v8x.php', retryLimit: 1, selectedCore: null, selectedTheme: null, selectedTdk: null, hostHeaders: ['@', 'www'] });
             const lineCount = ref(0);
             const isDeploying = ref(false);
 
@@ -897,8 +1000,12 @@
                 if (!uniqueHeaders.length) return { ok: false, message: '请至少选择一个主机头' };
                 const invalid = uniqueHeaders.filter(h => !hostHeaderOptions.includes(h));
                 if (invalid.length) return { ok: false, message: `主机头不合法：${invalid.join(',')}` };
+                const retryLimit = Number(deployForm.retryLimit);
+                if (!Number.isInteger(retryLimit) || retryLimit < 0 || retryLimit > 5) {
+                    return { ok: false, message: '失败重试次数必须是 0-5 的整数' };
+                }
 
-                return { ok: true, sites, adminPath, hostHeaders: uniqueHeaders };
+                return { ok: true, sites, adminPath, hostHeaders: uniqueHeaders, retryLimit };
             };
 
             const submitDeploy = async () => {
@@ -915,9 +1022,13 @@
                         template_key: deployForm.selectedTheme.obs_path,
                         admin_path: validated.adminPath,
                         host_headers: validated.hostHeaders,
+                        retry_limit: validated.retryLimit,
                         tdk_config: { title: deployForm.selectedTdk.title, keywords: deployForm.selectedTdk.keywords, description: deployForm.selectedTdk.description }
                     });
                     showToast(res.message, 'success');
+                    if ((res.skipped_count || 0) > 0) {
+                        showToast(`幂等保护：已跳过 ${res.skipped_count} 个部署中域名`, 'warning');
+                    }
                     deployForm.domainsText = ''; updateLineCount();
                 } catch(e) { showToast(e, 'error'); }
                 finally { isDeploying.value = false; }
@@ -931,7 +1042,7 @@
                 sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, cleanupStuckDeployingSites, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, closeSiteLogsModal, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs, isSiteLogStreaming,
                 servers, showAddServerModal, addForm, submitAddServer, testServer, deleteServer, testingId,
                 tdks, showAddTdkModal, bulkTdkInput, parsedTdksCount, parseTdkLines, submitBulkTdk, deleteTdk, isSubmittingTdk,
-                templates, showUploadModal, uploadForm, isUploading, submitUpload, fileInput, deleteTemplate, uploadProgress, uploadedSizeText, totalSizeText, uploadSpeedText, closeUploadModal,
+                templates, showUploadModal, uploadForm, isUploading, submitUpload, fileInput, deleteTemplate, uploadProgress, uploadedSizeText, totalSizeText, uploadSpeedText, closeUploadModal, cancelUpload, retryLastUpload, uploadRetryLimit, currentUploadAttempt, uploadLastFailed, hasRetryUploadPayload,
                 deployForm, activeDrawer, openDrawer, selectResource, filteredTemplates, lineCount, updateLineCount, isDeploying, submitDeploy, isFormValid, availableIpCount, copyAvailableIps, hostHeaderOptions, toggleHostHeader
             };
         }

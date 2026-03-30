@@ -57,6 +57,9 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
     invalid_headers = [h for h in headers if h not in ALLOWED_HOST_HEADERS]
     if invalid_headers:
         raise HTTPException(status_code=400, detail=f"host_headers 非法: {', '.join(invalid_headers)}")
+    retry_limit = int(request.retry_limit or 0)
+    if retry_limit < 0 or retry_limit > 5:
+        raise HTTPException(status_code=400, detail="retry_limit 仅支持 0-5")
 
     target_server = db.query(Server).filter(Server.id == request.server_id).first()
     
@@ -67,6 +70,7 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
 
     computed_bt_url = f"{target_server.bt_protocol}://{target_server.main_ip}:{target_server.bt_port}"
     task_records = []
+    skipped_domains = []
     seen_domains = set()
     
     for site_data in request.sites:
@@ -82,6 +86,19 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
 
         # 1. 检查是否已经存在该域名，如果存在则更新，不存在则创建
         site_record = db.query(Site).filter(Site.domain == domain).first()
+        if site_record and site_record.status == "deploying" and not request.force_redeploy:
+            skipped_domains.append(domain)
+            db.add(
+                SiteDeployLog(
+                    site_id=site_record.id,
+                    level="info",
+                    stage="idempotent_skip",
+                    message="重复提交已跳过：该域名当前仍在部署中（如需强制重投请开启 force_redeploy）"
+                )
+            )
+            db.commit()
+            continue
+
         if not site_record:
             site_record = Site(domain=domain)
             db.add(site_record)
@@ -110,13 +127,27 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
             tdk_config=request.tdk_config,
             admin_path=admin_path,
             host_headers=headers,
+            retry_limit=retry_limit,
             bt_url=computed_bt_url,
             bt_key=target_server.bt_key
         )
         task_records.append({"domain": domain, "task_id": task.id})
 
+    accepted_count = len(task_records)
+    skipped_count = len(skipped_domains)
+    msg_parts = []
+    if accepted_count:
+        msg_parts.append(f"成功接收 {accepted_count} 个站点任务")
+    if skipped_count:
+        msg_parts.append(f"跳过 {skipped_count} 个重复部署中站点")
+    if not msg_parts:
+        msg_parts.append("没有可入队任务（均被幂等保护跳过）")
+
     return {
         "status": "success",
-        "message": f"成功接收 {len(request.sites)} 个站点的任务！",
-        "tasks": task_records
+        "message": "；".join(msg_parts) + "。",
+        "tasks": task_records,
+        "accepted_count": accepted_count,
+        "skipped_count": skipped_count,
+        "skipped_domains": skipped_domains
     }
