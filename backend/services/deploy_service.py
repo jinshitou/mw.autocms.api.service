@@ -3,6 +3,7 @@ from core.obs_client import OBSClient
 from core.ssh_client import execute_remote_cmd
 import shlex
 import time
+import asyncio
 
 class DeployEngine:
     def __init__(self, server_ip, bt_url, bt_key, ssh_port=22):
@@ -16,10 +17,16 @@ class DeployEngine:
             if callable(on_progress):
                 on_progress(stage, message)
 
-        async def run_timed_step(stage, title, coro):
+        async def run_timed_step(stage, title, coro, timeout_sec=None):
             notify(stage, f"{title} 开始")
             started = time.monotonic()
-            result = await coro
+            try:
+                if timeout_sec and timeout_sec > 0:
+                    result = await asyncio.wait_for(coro, timeout=timeout_sec)
+                else:
+                    result = await coro
+            except asyncio.TimeoutError:
+                raise Exception(f"{title} 超时（>{timeout_sec}s）")
             elapsed = time.monotonic() - started
             notify(stage, f"{title} 完成，耗时 {elapsed:.2f}s")
             return result
@@ -29,12 +36,14 @@ class DeployEngine:
         await run_timed_step(
             "bt",
             "宝塔：创建站点",
-            self.bt_api.create_site(domain=domain, host_headers=host_headers, php_version="74")
+            self.bt_api.create_site(domain=domain, host_headers=host_headers, php_version="74"),
+            timeout_sec=45
         )
         await run_timed_step(
             "bt",
             "宝塔：创建数据库",
-            self.bt_api.create_database(db_name, db_user, db_pass)
+            self.bt_api.create_database(db_name, db_user, db_pass),
+            timeout_sec=45
         )
 
         print(f"[{domain}] Step 2: 获取 OBS 授权下载链接...")

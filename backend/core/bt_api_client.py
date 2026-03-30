@@ -14,13 +14,41 @@ class BaotaAPI:
         request_token = hashlib.md5((request_time + md5_key).encode('utf-8')).hexdigest()
         return {"request_time": request_time, "request_token": request_token}
 
+    @staticmethod
+    def _is_success(resp: dict) -> bool:
+        if not isinstance(resp, dict):
+            return False
+        if "status" in resp:
+            status = str(resp.get("status")).lower()
+            return status in {"1", "true", "ok", "success"}
+        # 宝塔某些接口只返回 msg/数据，保守认为是成功
+        return True
+
     async def _post(self, endpoint: str, data: dict = None) -> dict:
         payload = self._get_auth_data()
         if data: payload.update(data)
-        async with httpx.AsyncClient(verify=False) as client:
+        timeout = httpx.Timeout(connect=8.0, read=20.0, write=20.0, pool=8.0)
+        async with httpx.AsyncClient(verify=False, timeout=timeout, trust_env=False) as client:
             url = f"{self.panel_url}{endpoint}"
-            response = await client.post(url, data=payload, timeout=30.0)
-            return response.json()
+            try:
+                response = await client.post(url, data=payload)
+            except httpx.TimeoutException as exc:
+                raise Exception(f"宝塔接口超时: {url} -> {exc}")
+            except httpx.HTTPError as exc:
+                raise Exception(f"宝塔接口网络异常: {url} -> {exc}")
+
+            if response.status_code != 200:
+                snippet = (response.text or "")[:300]
+                raise Exception(f"宝塔接口状态码异常: {url} status={response.status_code} body={snippet}")
+            try:
+                body = response.json()
+            except Exception:
+                snippet = (response.text or "")[:300]
+                raise Exception(f"宝塔接口返回非 JSON: {url} body={snippet}")
+            if not self._is_success(body):
+                msg = body.get("msg") if isinstance(body, dict) else str(body)
+                raise Exception(f"宝塔接口业务失败: {url} msg={msg}")
+            return body
             
     async def create_site(self, domain: str, host_headers=None, php_version: str = "74") -> dict:
         host_headers = host_headers or ["@", "www"]
