@@ -128,6 +128,7 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
             admin_path=admin_path,
             host_headers=headers,
             retry_limit=retry_limit,
+            ssh_port=int(getattr(target_server, "ssh_port", 22) or 22),
             bt_url=computed_bt_url,
             bt_key=target_server.bt_key
         )

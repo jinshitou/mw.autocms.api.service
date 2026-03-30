@@ -2,6 +2,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from sqlalchemy import inspect, text
 from api.routers import deploy, server, tdk, template, site
 from core.database import engine, Base
 import models.server
@@ -10,6 +11,19 @@ import models.site
 import models.site_log
 
 Base.metadata.create_all(bind=engine)
+
+
+def ensure_schema_compatibility():
+    inspector = inspect(engine)
+    if not inspector.has_table("servers"):
+        return
+    cols = {c["name"] for c in inspector.get_columns("servers")}
+    if "ssh_port" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE servers ADD COLUMN ssh_port INTEGER DEFAULT 22"))
+
+
+ensure_schema_compatibility()
 
 app = FastAPI(title="批量易优核心接口", version="1.0", docs_url=None)
 

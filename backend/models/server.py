@@ -12,6 +12,7 @@ class Server(Base):
     
     bt_protocol = Column(String, default="http")
     bt_port = Column(Integer, default=8888)
+    ssh_port = Column(Integer, default=22)
     bt_key = Column(String)
     
     is_active = Column(Boolean, default=True)

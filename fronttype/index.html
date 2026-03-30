@@ -149,15 +149,17 @@
                 <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg overflow-hidden">
                     <table class="w-full text-left text-sm text-gray-300">
                         <thead class="bg-gray-800/50 text-xs text-gray-400 border-b border-panelborder">
-                            <tr><th class="px-6 py-4">备注名</th><th class="px-6 py-4">主控 IP</th><th class="px-6 py-4">IP 池总容量</th><th class="px-6 py-4 text-right">操作</th></tr>
+                            <tr><th class="px-6 py-4">备注名</th><th class="px-6 py-4">主控 IP</th><th class="px-6 py-4">SSH端口</th><th class="px-6 py-4">IP 池总容量</th><th class="px-6 py-4 text-right">操作</th></tr>
                         </thead>
                         <tbody>
                             <tr v-for="server in servers" :key="server.id" class="border-b border-panelborder hover:bg-gray-700/20">
                                 <td class="px-6 py-4 font-bold text-white">{{ server.name }}</td>
                                 <td class="px-6 py-4">{{ server.main_ip }}</td>
+                                <td class="px-6 py-4 font-mono text-xs">{{ server.ssh_port || 22 }}</td>
                                 <td class="px-6 py-4"><span class="text-brand font-bold">{{ (server.ip_pool || '').split(',').length }} 个</span></td>
                                 <td class="px-6 py-4 text-right space-x-2">
                                     <button @click="testServer(server.id)" :disabled="testingId === server.id" class="text-xs bg-success/10 text-success px-3 py-1 rounded">测试</button>
+                                    <button @click="updateServerSshPort(server)" class="text-xs bg-brand/10 text-brand px-3 py-1 rounded">SSH端口</button>
                                     <button @click="deleteServer(server.id)" class="text-xs bg-danger/10 text-danger px-3 py-1 rounded">删除</button>
                                 </td>
                             </tr>
@@ -446,14 +448,21 @@
                     <input v-model="addForm.main_ip" type="text" class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-white outline-none focus:border-brand">
                 </div>
             </div>
-            <div class="grid grid-cols-3 gap-4 mb-4">
+            <div class="grid grid-cols-4 gap-4 mb-4">
                 <div>
                     <label class="block text-gray-300 text-xs mb-1">协议</label>
-                    <select v-model="addForm.bt_protocol" class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-white outline-none focus:border-brand"><option value="http">HTTP</option></select>
+                    <select v-model="addForm.bt_protocol" class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-white outline-none focus:border-brand">
+                        <option value="http">HTTP</option>
+                        <option value="https">HTTPS</option>
+                    </select>
                 </div>
                 <div>
                     <label class="block text-gray-300 text-xs mb-1">端口</label>
                     <input v-model="addForm.bt_port" type="number" class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-white outline-none focus:border-brand">
+                </div>
+                <div>
+                    <label class="block text-gray-300 text-xs mb-1">SSH 端口</label>
+                    <input v-model="addForm.ssh_port" type="number" class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-white outline-none focus:border-brand">
                 </div>
                 <div>
                     <label class="block text-gray-300 text-xs mb-1">宝塔 API Key</label>
@@ -508,6 +517,7 @@
     const { createApp, ref, reactive, computed, onMounted, onBeforeUnmount } = Vue;
     // ⚠️⚠️⚠️ 最终防线：一定要改 IP ！！！
     const API_BASE_URL = 'http://autoapi.qlzb.win:8230/api'; 
+    // const API_BASE_URL = 'http://127.0.0.1:8230/api'; 
 
     const parseError = (err) => typeof err?.response?.data?.detail === 'string' ? err.response.data.detail : err?.message || '未知错误';
     const DOMAIN_REGEX = /^(?=.{1,253}$)(?!-)(?:[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,63}$/;
@@ -538,7 +548,7 @@
             const servers = ref([]);
             const showAddServerModal = ref(false);
             const testingId = ref(null);
-            const addForm = reactive({ name: '', main_ip: '', ip_pool: '', bt_protocol: 'http', bt_port: 8888, bt_key: '' });
+            const addForm = reactive({ name: '', main_ip: '', ip_pool: '', bt_protocol: 'http', bt_port: 8888, ssh_port: 22, bt_key: '' });
             const fetchServers = async () => { try { servers.value = await ax.get('/servers/'); } catch(e){} };
             
             const validateIpPool = (text) => {
@@ -559,6 +569,7 @@
                 if (!validation.valid) return showToast(validation.msg, 'error');
                 try {
                     addForm.bt_port = Number(addForm.bt_port) || 8888;
+                    addForm.ssh_port = Number(addForm.ssh_port) || 22;
                     await ax.post('/servers/', addForm);
                     showToast('服务器录入成功', 'success');
                     showAddServerModal.value = false;
@@ -573,6 +584,19 @@
                     else showToast(res.message, 'error');
                 } catch(e) { showToast(e, 'error'); }
                 finally { testingId.value = null; }
+            };
+            const updateServerSshPort = async (server) => {
+                const input = prompt(`修改服务器 ${server.name} 的 SSH 端口`, String(server.ssh_port || 22));
+                if (input === null) return;
+                const sshPort = Number(input);
+                if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535) return showToast('SSH端口必须是 1-65535 的整数', 'error');
+                try {
+                    await ax.put(`/servers/${server.id}/ssh-port`, { ssh_port: sshPort });
+                    showToast(`SSH端口已更新为 ${sshPort}`, 'success');
+                    fetchServers();
+                } catch (e) {
+                    showToast(e, 'error');
+                }
             };
             const deleteServer = async (id) => { if(confirm('确定删除?')) { try { await ax.delete(`/servers/${id}`); fetchServers(); } catch(e){} } };
 
@@ -1169,7 +1193,7 @@
             return {
                 currentTab, apiStatus, toasts, showToast,
                 sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, cleanupStuckDeployingSites, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, closeSiteLogsModal, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs, isSiteLogStreaming,
-                servers, showAddServerModal, addForm, submitAddServer, testServer, deleteServer, testingId,
+                servers, showAddServerModal, addForm, submitAddServer, testServer, updateServerSshPort, deleteServer, testingId,
                 tdks, showAddTdkModal, bulkTdkInput, parsedTdksCount, parseTdkLines, submitBulkTdk, deleteTdk, isSubmittingTdk,
                 templates, showUploadModal, uploadForm, isUploading, submitUpload, fileInput, deleteTemplate, uploadProgress, uploadedSizeText, totalSizeText, uploadSpeedText, closeUploadModal, cancelUpload, retryLastUpload, uploadRetryLimit, currentUploadAttempt, uploadLastFailed, hasRetryUploadPayload,
                 deployForm, activeDrawer, openDrawer, selectResource, filteredTemplates, lineCount, updateLineCount, isDeploying, submitDeploy, isFormValid, availableIpCount, copyAvailableIps, hostHeaderOptions, toggleHostHeader, parseAvailableIpPool, parsedIpSummary, parsedIpPreview, domainSeedText, generateDomainIpTemplate, onDeployServerChange

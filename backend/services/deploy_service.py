@@ -132,7 +132,7 @@ class DeployEngine:
                     "bash -lc 'set -euo pipefail; "
                     f"cd {esc_site_dir}; "
                     f"if [ -f login.php ]; then mv login.php {esc_admin_path}; fi; "
-                    f"chown -R www:www {esc_site_dir}; "
+                    f"chown -R www:www {esc_site_dir} 2>/dev/null || true; "
                     f"rm -rf {esc_site_dir}/install/'"
                 ),
                 timeout_sec=120

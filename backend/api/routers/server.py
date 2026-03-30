@@ -5,10 +5,11 @@ import time
 import hashlib
 import httpx
 import ipaddress
+import socket
 
 from core.database import get_db
 from models.server import Server
-from schemas.server import ServerCreate, ServerResponse
+from schemas.server import ServerCreate, ServerResponse, ServerSshPortUpdate
 
 router = APIRouter()
 
@@ -81,6 +82,20 @@ def delete_server(server_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success"}
 
+
+@router.put("/{server_id}/ssh-port", response_model=ServerResponse)
+def update_server_ssh_port(server_id: int, payload: ServerSshPortUpdate, db: Session = Depends(get_db)):
+    server = db.query(Server).filter(Server.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="未找到服务器")
+    ssh_port = int(payload.ssh_port or 0)
+    if ssh_port < 1 or ssh_port > 65535:
+        raise HTTPException(status_code=400, detail="ssh_port 必须在 1-65535")
+    server.ssh_port = ssh_port
+    db.commit()
+    db.refresh(server)
+    return server
+
 @router.post("/{server_id}/test")
 async def test_server_connection(server_id: int, db: Session = Depends(get_db)):
     server = db.query(Server).filter(Server.id == server_id).first()
@@ -95,11 +110,18 @@ async def test_server_connection(server_id: int, db: Session = Depends(get_db)):
     try:
         async with httpx.AsyncClient(verify=False, timeout=8.0) as client:
             res = await client.post(f"{bt_url}/system?action=GetSystemTotal", data={'request_time': now_time, 'request_token': request_token})
-        if res.status_code == 200:
-            res_data = res.json()
-            if isinstance(res_data, dict) and res_data.get('status') is False:
-                return {"status": "error", "message": f"宝塔拒绝: {res_data.get('msg')}"}
-            return {"status": "success", "message": "连接成功！密钥验证通过。"}
-        return {"status": "error", "message": "HTTP状态码异常"}
+        if res.status_code != 200:
+            return {"status": "error", "message": "宝塔 HTTP 状态码异常"}
+        res_data = res.json()
+        if isinstance(res_data, dict) and res_data.get('status') is False:
+            return {"status": "error", "message": f"宝塔拒绝: {res_data.get('msg')}"}
+
+        ssh_port = int(getattr(server, "ssh_port", 22) or 22)
+        try:
+            with socket.create_connection((server.main_ip, ssh_port), timeout=3):
+                pass
+            return {"status": "success", "message": f"宝塔连接成功，SSH({ssh_port}) 端口可达。"}
+        except Exception as ssh_exc:
+            return {"status": "error", "message": f"宝塔连接成功，但 SSH({ssh_port}) 不可达: {ssh_exc}"}
     except Exception as e:
         return {"status": "error", "message": f"探测失败: {str(e)}"}

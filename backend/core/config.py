@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     
     # SSH
     ssh_private_key_path: str = ""
+    ssh_port: int = 22
     
     # 数据库链接 (默认使用本地 SQLite 方便 Mac 调试)
     database_url: str = "sqlite:///./local_dev.db"

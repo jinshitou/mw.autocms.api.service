@@ -1,6 +1,7 @@
 from worker.celery_app import celery_app
 from services.deploy_service import DeployEngine
 from core.database import SessionLocal
+import models.server  # noqa: F401 - 确保 SQLAlchemy 能解析 sites.server_id 外键
 from models.site import Site
 from models.site_log import SiteDeployLog
 import asyncio
@@ -38,7 +39,7 @@ def _write_log(db, site_id, stage, message, level="info"):
 
 
 @celery_app.task(bind=True)
-def process_single_site(self, site_id, server_ip, domain, bind_ip, core_key, template_key, tdk_config, admin_path, host_headers, retry_limit, bt_url, bt_key):
+def process_single_site(self, site_id, server_ip, domain, bind_ip, core_key, template_key, tdk_config, admin_path, host_headers, retry_limit, bt_url, bt_key, ssh_port=22):
     retry_limit = max(0, min(int(retry_limit or 0), 5))
 
     def _is_retryable_error(message: str) -> bool:
@@ -63,13 +64,14 @@ def process_single_site(self, site_id, server_ip, domain, bind_ip, core_key, tem
             "permission denied",
             "syntax error",
             "no such file",
+            "域名已存在",
         ]
         if any(k in text for k in non_retryable_keywords):
             return False
         return any(k in text for k in retryable_keywords)
 
     # 1. 实例化核心上站引擎
-    engine = DeployEngine(server_ip=server_ip, bt_url=bt_url, bt_key=bt_key, ssh_port=22)
+    engine = DeployEngine(server_ip=server_ip, bt_url=bt_url, bt_key=bt_key, ssh_port=int(ssh_port or 22))
 
     # 2. 动态生成宝塔数据库名和密码
     db_name = domain.replace('.', '_')[:10] + "".join(random.choices(string.ascii_lowercase, k=4))
@@ -80,7 +82,7 @@ def process_single_site(self, site_id, server_ip, domain, bind_ip, core_key, tem
         attempt_no = int(self.request.retries or 0) + 1
         total_attempts = retry_limit + 1
         host_txt = ",".join(host_headers or [])
-        _write_log(db, site_id, "start", f"开始部署: {domain} -> {bind_ip}，主机头: {host_txt}，第 {attempt_no}/{total_attempts} 次尝试")
+        _write_log(db, site_id, "start", f"开始部署: {domain} -> {bind_ip}，主机头: {host_txt}，SSH端口: {engine.ssh_port}，第 {attempt_no}/{total_attempts} 次尝试")
         _write_log(db, site_id, "bt", "正在调用宝塔 API 创建站点与数据库")
 
         # 3. 执行真正的部署流水线 (注意这里的参数全部带上了名字)
