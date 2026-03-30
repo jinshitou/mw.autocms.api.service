@@ -100,15 +100,10 @@ class DeployEngine:
             )
         )
 
-        sql_content = (
-            f"SOURCE {site_dir}/install/eyoucms.sql;\n"
-            f"UPDATE ey_config SET value='{esc_title}' WHERE name='web_title';\n"
-            f"UPDATE ey_config SET value='{esc_keywords}' WHERE name='web_keywords';\n"
-            f"UPDATE ey_config SET value='{esc_desc}' WHERE name='web_description';\n"
-        )
+        sql_content = f"SOURCE {site_dir}/install/eyoucms.sql;\n"
         await run_timed_step(
             "ssh_mysql",
-            "SSH：导入数据库并写入 TDK",
+            "SSH：导入数据库基础 SQL",
             execute_remote_cmd(
                 self.server_ip,
                 self.ssh_port,
@@ -119,6 +114,100 @@ class DeployEngine:
                     f"rm -f {esc_sql_path}'"
                 ),
                 timeout_sec=180
+            )
+        )
+
+        # 不同 Eyou 版本 ey_config 结构可能不同，先探测再生成 SQL。
+        # 注意：按当前业务要求，TDK 注入失败即视为部署失败。
+        tdk_sql_path = f"/tmp/{db_name}_autocms_tdk.sql"
+        esc_tdk_sql_path = shlex.quote(tdk_sql_path)
+        columns_raw = await run_timed_step(
+            "ssh_tdk_probe",
+            "SSH：探测 ey_config 表结构",
+            execute_remote_cmd(
+                self.server_ip,
+                self.ssh_port,
+                (
+                    "bash -lc 'set -euo pipefail; "
+                    f"mysql --connect-timeout=20 -u{esc_db_user} -p{esc_db_pass} {esc_db_name} "
+                    "-Nse \"SHOW COLUMNS FROM ey_config;\" | awk \"{print \\$1}\"'"
+                ),
+                timeout_sec=60
+            )
+        )
+        columns = {line.strip().strip("`") for line in columns_raw.splitlines() if line.strip()}
+        if not columns:
+            raise Exception("探测 ey_config 失败：未读取到任何字段")
+
+        def pick_first(candidates):
+            for name in candidates:
+                if name in columns:
+                    return name
+            return None
+
+        # 结构 A：key-value 存储（name/value 或兼容命名）
+        key_col = pick_first(["name", "config_name", "key"])
+        value_col = pick_first(["value", "config_value", "val"])
+        tdk_sql_content = ""
+        if key_col and value_col:
+            keys_raw = await run_timed_step(
+                "ssh_tdk_probe",
+                "SSH：探测 ey_config 键名",
+                execute_remote_cmd(
+                    self.server_ip,
+                    self.ssh_port,
+                    (
+                        "bash -lc 'set -euo pipefail; "
+                        f"mysql --connect-timeout=20 -u{esc_db_user} -p{esc_db_pass} {esc_db_name} "
+                        f"-Nse \"SELECT `{key_col}` FROM ey_config;\"'"
+                    ),
+                    timeout_sec=60
+                )
+            )
+            keys = {line.strip() for line in keys_raw.splitlines() if line.strip()}
+
+            def pick_key(candidates, field_name):
+                for item in candidates:
+                    if item in keys:
+                        return item
+                raise Exception(f"ey_config 缺少 {field_name} 对应键（候选：{', '.join(candidates)}）")
+
+            title_key = pick_key(["web_title", "web_name", "seo_title", "title"], "title")
+            keywords_key = pick_key(["web_keywords", "seo_keywords", "keywords"], "keywords")
+            desc_key = pick_key(["web_description", "seo_description", "description"], "description")
+            tdk_sql_content = (
+                f"UPDATE ey_config SET `{value_col}`='{esc_title}' WHERE `{key_col}`='{title_key}';\n"
+                f"UPDATE ey_config SET `{value_col}`='{esc_keywords}' WHERE `{key_col}`='{keywords_key}';\n"
+                f"UPDATE ey_config SET `{value_col}`='{esc_desc}' WHERE `{key_col}`='{desc_key}';\n"
+            )
+        else:
+            # 结构 B：直接字段存储（web_title/web_keywords/web_description 等）
+            title_col = pick_first(["web_title", "web_name", "seo_title", "title"])
+            keywords_col = pick_first(["web_keywords", "seo_keywords", "keywords"])
+            desc_col = pick_first(["web_description", "seo_description", "description"])
+            if not (title_col and keywords_col and desc_col):
+                raise Exception(
+                    "ey_config 字段结构不受支持，缺少 TDK 字段（需要 title/keywords/description 对应列）"
+                )
+            tdk_sql_content = (
+                f"UPDATE ey_config SET `{title_col}`='{esc_title}', "
+                f"`{keywords_col}`='{esc_keywords}', "
+                f"`{desc_col}`='{esc_desc}' LIMIT 1;\n"
+            )
+
+        await run_timed_step(
+            "ssh_tdk",
+            "SSH：注入 TDK 配置",
+            execute_remote_cmd(
+                self.server_ip,
+                self.ssh_port,
+                (
+                    "bash -lc 'set -euo pipefail; "
+                    f"cat > {esc_tdk_sql_path} <<\"SQL\"\n{tdk_sql_content}SQL\n"
+                    f"mysql --connect-timeout=20 -u{esc_db_user} -p{esc_db_pass} {esc_db_name} < {esc_tdk_sql_path}; "
+                    f"rm -f {esc_tdk_sql_path}'"
+                ),
+                timeout_sec=90
             )
         )
 
