@@ -4,6 +4,7 @@ from core.ssh_client import execute_remote_cmd
 import shlex
 import time
 import asyncio
+import base64
 
 class DeployEngine:
     def __init__(self, server_ip, bt_url, bt_key, ssh_port=22):
@@ -133,6 +134,7 @@ class DeployEngine:
             "    'prefix' => 'ey_',\n"
             "];\n"
         ).format(db_name=php_db_name, db_user=php_db_user, db_pass=php_db_pass)
+        db_php_config_b64 = base64.b64encode(db_php_config.encode("utf-8")).decode("ascii")
         await run_timed_step(
             "ssh_db_config",
             "SSH：写入数据库连接配置",
@@ -148,7 +150,7 @@ class DeployEngine:
                     f"{esc_site_dir}/application/database.php; do "
                     "if [ -f \"$f\" ]; then "
                     "cp -f \"$f\" \"$f.bak_autocms\"; "
-                    f"cat > \"$f\" <<\"PHP\"\n{db_php_config}PHP\n"
+                    f"printf %s {db_php_config_b64} | base64 -d > \"$f\"; "
                     "updated=1; "
                     "fi; "
                     "done; "
