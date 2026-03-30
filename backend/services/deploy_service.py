@@ -159,7 +159,7 @@ class DeployEngine:
                     (
                         "bash -lc 'set -euo pipefail; "
                         f"mysql --connect-timeout=20 -u{esc_db_user} -p{esc_db_pass} {esc_db_name} "
-                        f"-Nse \"SELECT `{key_col}` FROM ey_config;\"'"
+                        f"-Nse \"SELECT \\`{key_col}\\` FROM ey_config;\"'"
                     ),
                     timeout_sec=60
                 )
