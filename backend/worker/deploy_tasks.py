@@ -6,15 +6,39 @@ from models.site_log import SiteDeployLog
 import asyncio
 import random
 import string
+import json
+import os
+import redis
+
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+LOG_CHANNEL_PREFIX = "site_logs"
+_redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 
 def _write_log(db, site_id, stage, message, level="info"):
-    db.add(SiteDeployLog(site_id=site_id, stage=stage, message=message, level=level))
+    log = SiteDeployLog(site_id=site_id, stage=stage, message=message, level=level)
+    db.add(log)
     db.commit()
+    db.refresh(log)
+
+    payload = {
+        "id": log.id,
+        "site_id": log.site_id,
+        "level": log.level,
+        "stage": log.stage,
+        "message": log.message,
+        "created_at": log.created_at.isoformat() if log.created_at else None,
+    }
+    try:
+        _redis_client.publish(f"{LOG_CHANNEL_PREFIX}:{site_id}", json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        # Redis 推送失败不影响主流程，前端可回退到 REST 查询
+        pass
 
 
 @celery_app.task(bind=True)
-def process_single_site(self, site_id, server_ip, domain, bind_ip, core_key, template_key, tdk_config, admin_path, bt_url, bt_key):
+def process_single_site(self, site_id, server_ip, domain, bind_ip, core_key, template_key, tdk_config, admin_path, host_headers, bt_url, bt_key):
     # 1. 实例化核心上站引擎
     engine = DeployEngine(server_ip=server_ip, bt_url=bt_url, bt_key=bt_key, ssh_port=22)
 
@@ -24,7 +48,8 @@ def process_single_site(self, site_id, server_ip, domain, bind_ip, core_key, tem
 
     db = SessionLocal()
     try:
-        _write_log(db, site_id, "start", f"开始部署: {domain} -> {bind_ip}")
+        host_txt = ",".join(host_headers or [])
+        _write_log(db, site_id, "start", f"开始部署: {domain} -> {bind_ip}，主机头: {host_txt}")
         _write_log(db, site_id, "bt", "正在调用宝塔 API 创建站点与数据库")
         _write_log(db, site_id, "obs", "正在生成 OBS 临时下载链接并准备下发")
         _write_log(db, site_id, "ssh", "正在通过 SSH 执行安装脚本")
@@ -38,7 +63,8 @@ def process_single_site(self, site_id, server_ip, domain, bind_ip, core_key, tem
             admin_path=admin_path, 
             tdk_config=tdk_config, 
             core_obs_key=core_key,
-            tpl_obs_key=template_key
+            tpl_obs_key=template_key,
+            host_headers=host_headers,
         ))
         
         # 4. 部署成功，更新数据库状态

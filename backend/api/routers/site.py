@@ -1,13 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException
+import asyncio
+import json
+import os
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
+from redis import asyncio as redis_async
 
-from core.database import get_db
+from core.database import get_db, SessionLocal
 from models.site import Site
 from models.site_log import SiteDeployLog
 from schemas.site import SitePageResponse, SiteBatchDeleteRequest, SiteDeployLogResponse
 
 router = APIRouter()
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+LOG_CHANNEL_PREFIX = "site_logs"
 
 @router.get("/", response_model=SitePageResponse)
 def get_sites(
@@ -74,6 +80,72 @@ def get_site_logs(site_id: int, limit: int = 200, db: Session = Depends(get_db))
     limit = max(1, min(limit, 1000))
     logs = db.query(SiteDeployLog).filter(SiteDeployLog.site_id == site_id).order_by(SiteDeployLog.id.asc()).limit(limit).all()
     return logs
+
+
+@router.websocket("/ws/{site_id}/logs")
+async def stream_site_logs(websocket: WebSocket, site_id: int):
+    await websocket.accept()
+    db = SessionLocal()
+    redis_conn = None
+    pubsub = None
+    try:
+        site = db.query(Site).filter(Site.id == site_id).first()
+        if not site:
+            await websocket.send_json({"type": "error", "message": "站点不存在"})
+            return
+
+        redis_conn = redis_async.from_url(REDIS_URL, decode_responses=True)
+        pubsub = redis_conn.pubsub()
+        await pubsub.subscribe(f"{LOG_CHANNEL_PREFIX}:{site_id}")
+
+        while True:
+            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=10.0)
+            if msg and msg.get("data"):
+                try:
+                    payload = json.loads(msg["data"])
+                    await websocket.send_json({"type": "log", "data": payload})
+                except Exception:
+                    # 跳过格式异常消息，继续监听
+                    pass
+            await asyncio.sleep(0.1)
+    except WebSocketDisconnect:
+        return
+    except Exception:
+        # Pub/Sub 异常时回退到 DB 轮询，避免前端无日志
+        last_id = 0
+        try:
+            while True:
+                logs = (
+                    db.query(SiteDeployLog)
+                    .filter(SiteDeployLog.site_id == site_id, SiteDeployLog.id > last_id)
+                    .order_by(SiteDeployLog.id.asc())
+                    .limit(200)
+                    .all()
+                )
+                for log in logs:
+                    await websocket.send_json(
+                        {
+                            "type": "log",
+                            "data": {
+                                "id": log.id,
+                                "site_id": log.site_id,
+                                "level": log.level,
+                                "stage": log.stage,
+                                "message": log.message,
+                                "created_at": log.created_at.isoformat() if log.created_at else None,
+                            },
+                        }
+                    )
+                    last_id = log.id
+                await asyncio.sleep(1)
+        except WebSocketDisconnect:
+            return
+    finally:
+        if pubsub:
+            await pubsub.close()
+        if redis_conn:
+            await redis_conn.close()
+        db.close()
 
 
 @router.post("/cleanup-stuck")

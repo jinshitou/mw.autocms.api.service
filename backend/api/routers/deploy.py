@@ -15,6 +15,7 @@ DOMAIN_REGEX = re.compile(
     r"^(?=.{1,253}$)(?!-)(?:[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,63}$"
 )
 ADMIN_PATH_REGEX = re.compile(r"^[A-Za-z0-9._-]{3,128}\.php$")
+ALLOWED_HOST_HEADERS = {"@", "www", "m"}
 
 
 def _is_valid_domain(value: str) -> bool:
@@ -49,6 +50,13 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
     required_tdk_fields = {"title", "keywords", "description"}
     if not request.tdk_config or not required_tdk_fields.issubset(set(request.tdk_config.keys())):
         raise HTTPException(status_code=400, detail="tdk_config 缺少必要字段: title/keywords/description")
+    headers = [h.strip().lower() for h in (request.host_headers or []) if h and h.strip()]
+    headers = list(dict.fromkeys(headers))
+    if not headers:
+        raise HTTPException(status_code=400, detail="host_headers 至少选择一个")
+    invalid_headers = [h for h in headers if h not in ALLOWED_HOST_HEADERS]
+    if invalid_headers:
+        raise HTTPException(status_code=400, detail=f"host_headers 非法: {', '.join(invalid_headers)}")
 
     target_server = db.query(Server).filter(Server.id == request.server_id).first()
     
@@ -101,6 +109,7 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
             template_key=request.template_key,
             tdk_config=request.tdk_config,
             admin_path=admin_path,
+            host_headers=headers,
             bt_url=computed_bt_url,
             bt_key=target_server.bt_key
         )

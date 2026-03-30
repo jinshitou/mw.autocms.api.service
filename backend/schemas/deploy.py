@@ -12,3 +12,4 @@ class DeployRequest(BaseModel):
     template_key: str
     tdk_config: Dict[str, str]
     admin_path: str
+    host_headers: List[str] = ["@", "www"]

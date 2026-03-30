@@ -266,11 +266,24 @@
                             </div>
 
                             <div class="flex-1 flex flex-col min-h-[300px]">
+                                <div class="mb-3">
+                                    <label class="block text-gray-300 text-sm font-bold mb-2">主机头（可多选）</label>
+                                    <div class="flex gap-2">
+                                        <button
+                                            v-for="host in hostHeaderOptions"
+                                            :key="host"
+                                            @click="toggleHostHeader(host)"
+                                            :class="['px-3 py-1.5 rounded text-xs border transition', deployForm.hostHeaders.includes(host) ? 'bg-brand/20 text-brand border-brand/60' : 'bg-darkbg text-gray-400 border-panelborder hover:border-brand/50']"
+                                        >
+                                            {{ host }}
+                                        </button>
+                                    </div>
+                                </div>
                                 <div class="flex justify-between items-end mb-2">
                                     <label class="block text-gray-300 text-sm font-bold">批量单站域名与绑定的独立 IP <span class="text-danger">*</span></label>
                                     <span class="text-xs text-brand font-bold">已识别任务数：{{ lineCount }}</span>
                                 </div>
-                                <textarea v-model="deployForm.domainsText" @input="updateLineCount" class="w-full flex-1 bg-darkbg border border-panelborder rounded-md px-4 py-3 text-sm font-mono text-gray-300 outline-none focus:border-brand resize-none" placeholder="格式: 域名|IP&#10;www.domain1.com|198.44.250.9"></textarea>
+                                <textarea v-model="deployForm.domainsText" @input="updateLineCount" class="w-full flex-1 bg-darkbg border border-panelborder rounded-md px-4 py-3 text-sm font-mono text-gray-300 outline-none focus:border-brand resize-none" placeholder="格式: 根域名|IP&#10;domain1.com|198.44.250.9"></textarea>
                             </div>
 
                             <div class="pt-4 mt-auto">
@@ -435,10 +448,10 @@
         <div class="bg-panelbg border border-panelborder rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[85vh]">
             <div class="px-6 py-4 border-b border-panelborder flex justify-between items-center">
                 <h3 class="font-bold text-white">部署日志：{{ activeLogSite?.domain || '-' }}</h3>
-                <button @click="showSiteLogsModal = false" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+                <button @click="closeSiteLogsModal" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="px-6 py-3 border-b border-panelborder bg-darkbg/50 flex justify-between items-center">
-                <span class="text-xs text-gray-400">共 {{ siteLogs.length }} 条</span>
+                <span class="text-xs text-gray-400">共 {{ siteLogs.length }} 条 {{ isSiteLogStreaming ? '(实时流已连接)' : '(离线查看)' }}</span>
                 <button @click="fetchSiteLogs" :disabled="!activeLogSite || isLoadingSiteLogs" class="text-xs px-3 py-1.5 rounded border border-panelborder hover:border-brand disabled:opacity-40">刷新日志</button>
             </div>
             <div class="p-4 overflow-y-auto flex-1 space-y-2 font-mono text-xs">
@@ -457,11 +470,13 @@
 </div>
 
 <script>
-    const { createApp, ref, reactive, computed, onMounted } = Vue;
+    const { createApp, ref, reactive, computed, onMounted, onBeforeUnmount } = Vue;
     // ⚠️⚠️⚠️ 最终防线：一定要改 IP ！！！
     const API_BASE_URL = 'http://autoapi.qlzb.win:8230/api'; 
 
     const parseError = (err) => typeof err?.response?.data?.detail === 'string' ? err.response.data.detail : err?.message || '未知错误';
+    const DOMAIN_REGEX = /^(?=.{1,253}$)(?!-)(?:[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,63}$/;
+    const ADMIN_PATH_REGEX = /^[A-Za-z0-9._-]{3,128}\.php$/;
     
     // 💡 核心优化：将 Axios 全局超时设置为 3 分钟 (180,000 毫秒)，专门应对大压缩包上传！
     const ax = axios.create({ baseURL: API_BASE_URL, timeout: 180000 }); 
@@ -588,6 +603,8 @@
             const activeLogSite = ref(null);
             const siteLogs = ref([]);
             const isLoadingSiteLogs = ref(false);
+            const siteLogWs = ref(null);
+            const isSiteLogStreaming = ref(false);
             const isAllSitesSelected = computed(() => sites.value.length > 0 && sites.value.every(s => selectedSiteIds.value.includes(s.id)));
             const fetchSites = async () => {
                 try {
@@ -665,6 +682,11 @@
                 activeLogSite.value = site;
                 showSiteLogsModal.value = true;
                 await fetchSiteLogs();
+                connectSiteLogStream();
+            };
+            const closeSiteLogsModal = () => {
+                showSiteLogsModal.value = false;
+                disconnectSiteLogStream();
             };
             const fetchSiteLogs = async () => {
                 if (!activeLogSite.value?.id) return;
@@ -676,6 +698,29 @@
                 } finally {
                     isLoadingSiteLogs.value = false;
                 }
+            };
+            const connectSiteLogStream = () => {
+                if (!activeLogSite.value?.id) return;
+                disconnectSiteLogStream();
+                const wsBase = API_BASE_URL.replace(/^http/i, 'ws').replace(/\/api$/, '');
+                const ws = new WebSocket(`${wsBase}/api/sites/ws/${activeLogSite.value.id}/logs`);
+                siteLogWs.value = ws;
+                ws.onopen = () => { isSiteLogStreaming.value = true; };
+                ws.onclose = () => { isSiteLogStreaming.value = false; };
+                ws.onerror = () => { isSiteLogStreaming.value = false; };
+                ws.onmessage = (evt) => {
+                    try {
+                        const payload = JSON.parse(evt.data || '{}');
+                        if (payload.type !== 'log' || !payload.data?.id) return;
+                        const exists = siteLogs.value.some(item => item.id === payload.data.id);
+                        if (!exists) siteLogs.value.push(payload.data);
+                    } catch (_) {}
+                };
+            };
+            const disconnectSiteLogStream = () => {
+                isSiteLogStreaming.value = false;
+                if (siteLogWs.value && siteLogWs.value.readyState <= 1) siteLogWs.value.close();
+                siteLogWs.value = null;
             };
 
             // ---- 模板直传管理 ----
@@ -759,11 +804,12 @@
 
             // ---- 批量建站控制台 ----
             const activeDrawer = ref(null);
-            const deployForm = reactive({ serverId: '', domainsText: '', adminPath: 'console_v8x.php', selectedCore: null, selectedTheme: null, selectedTdk: null });
+            const hostHeaderOptions = ['@', 'www', 'm'];
+            const deployForm = reactive({ serverId: '', domainsText: '', adminPath: 'console_v8x.php', selectedCore: null, selectedTheme: null, selectedTdk: null, hostHeaders: ['@', 'www'] });
             const lineCount = ref(0);
             const isDeploying = ref(false);
 
-            const isFormValid = computed(() => deployForm.serverId && deployForm.selectedCore && deployForm.selectedTheme && deployForm.selectedTdk && lineCount.value > 0);
+            const isFormValid = computed(() => deployForm.serverId && deployForm.selectedCore && deployForm.selectedTheme && deployForm.selectedTdk && deployForm.hostHeaders.length > 0 && lineCount.value > 0);
             const filteredTemplates = computed(() => templates.value.filter(t => t.pkg_type === activeDrawer.value));
             const selectedDeployServer = computed(() => servers.value.find(s => String(s.id) === String(deployForm.serverId)) || null);
             const availableIpList = computed(() => {
@@ -804,14 +850,61 @@
                     showToast('复制失败：当前浏览器/页面环境不支持自动复制', 'error');
                 }
             };
+            const toggleHostHeader = (host) => {
+                const idx = deployForm.hostHeaders.indexOf(host);
+                if (idx >= 0) deployForm.hostHeaders.splice(idx, 1);
+                else deployForm.hostHeaders.push(host);
+            };
 
             const updateLineCount = () => { lineCount.value = deployForm.domainsText.split('\n').filter(l => l.trim().includes('|')).length; };
+            const isValidIPv4 = (ip) => {
+                const parts = (ip || '').split('.');
+                if (parts.length !== 4) return false;
+                return parts.every((part) => {
+                    if (!/^\d+$/.test(part)) return false;
+                    const n = Number(part);
+                    return n >= 0 && n <= 255;
+                });
+            };
+            const normalizeDomain = (domain) => (domain || '').trim().toLowerCase();
+            const validateDeployInput = () => {
+                const lines = deployForm.domainsText.split('\n').map(l => l.trim()).filter(Boolean);
+                if (!lines.length) return { ok: false, message: '请至少输入 1 行域名|IP 任务' };
+
+                const duplicateGuard = new Set();
+                const sites = [];
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    if (!line.includes('|')) return { ok: false, message: `第 ${i + 1} 行格式错误，必须为 域名|IP` };
+                    const [rawDomain, rawIp, extra] = line.split('|').map(v => (v || '').trim());
+                    if (extra !== undefined) return { ok: false, message: `第 ${i + 1} 行格式错误，分隔符“|”只能有一个` };
+
+                    const domain = normalizeDomain(rawDomain);
+                    const bind_ip = rawIp;
+                    if (!DOMAIN_REGEX.test(domain)) return { ok: false, message: `第 ${i + 1} 行域名不合法：${rawDomain}` };
+                    if (!isValidIPv4(bind_ip)) return { ok: false, message: `第 ${i + 1} 行 IPv4 不合法：${bind_ip}` };
+                    if (duplicateGuard.has(domain)) return { ok: false, message: `存在重复域名：${domain}` };
+                    duplicateGuard.add(domain);
+                    sites.push({ domain, bind_ip });
+                }
+
+                const adminPath = (deployForm.adminPath || '').trim();
+                if (!ADMIN_PATH_REGEX.test(adminPath) || adminPath.includes('/') || adminPath.includes('\\')) {
+                    return { ok: false, message: '后台路径不合法，仅允许文件名格式，如 console_v8x.php' };
+                }
+                const hostHeaders = (deployForm.hostHeaders || []).filter(Boolean).map(h => String(h).trim().toLowerCase());
+                const uniqueHeaders = [...new Set(hostHeaders)];
+                if (!uniqueHeaders.length) return { ok: false, message: '请至少选择一个主机头' };
+                const invalid = uniqueHeaders.filter(h => !hostHeaderOptions.includes(h));
+                if (invalid.length) return { ok: false, message: `主机头不合法：${invalid.join(',')}` };
+
+                return { ok: true, sites, adminPath, hostHeaders: uniqueHeaders };
+            };
 
             const submitDeploy = async () => {
-                const sites = deployForm.domainsText.split('\n').filter(l => l.trim().includes('|')).map(line => {
-                    const [domain, bind_ip] = line.split('|').map(i => i.trim());
-                    return { domain, bind_ip };
-                });
+                const validated = validateDeployInput();
+                if (!validated.ok) return showToast(validated.message, 'error');
+                const sites = validated.sites;
 
                 isDeploying.value = true;
                 try {
@@ -820,7 +913,8 @@
                         sites: sites,
                         core_key: deployForm.selectedCore.obs_path,
                         template_key: deployForm.selectedTheme.obs_path,
-                        admin_path: deployForm.adminPath,
+                        admin_path: validated.adminPath,
+                        host_headers: validated.hostHeaders,
                         tdk_config: { title: deployForm.selectedTdk.title, keywords: deployForm.selectedTdk.keywords, description: deployForm.selectedTdk.description }
                     });
                     showToast(res.message, 'success');
@@ -830,14 +924,15 @@
             };
 
             onMounted(() => { checkHealth(); fetchServers(); fetchTdks(); fetchTemplates(); fetchSites(); });
+            onBeforeUnmount(() => { disconnectSiteLogStream(); });
 
             return {
                 currentTab, apiStatus, toasts, showToast,
-                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, cleanupStuckDeployingSites, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs,
+                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, cleanupStuckDeployingSites, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, closeSiteLogsModal, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs, isSiteLogStreaming,
                 servers, showAddServerModal, addForm, submitAddServer, testServer, deleteServer, testingId,
                 tdks, showAddTdkModal, bulkTdkInput, parsedTdksCount, parseTdkLines, submitBulkTdk, deleteTdk, isSubmittingTdk,
                 templates, showUploadModal, uploadForm, isUploading, submitUpload, fileInput, deleteTemplate, uploadProgress, uploadedSizeText, totalSizeText, uploadSpeedText, closeUploadModal,
-                deployForm, activeDrawer, openDrawer, selectResource, filteredTemplates, lineCount, updateLineCount, isDeploying, submitDeploy, isFormValid, availableIpCount, copyAvailableIps
+                deployForm, activeDrawer, openDrawer, selectResource, filteredTemplates, lineCount, updateLineCount, isDeploying, submitDeploy, isFormValid, availableIpCount, copyAvailableIps, hostHeaderOptions, toggleHostHeader
             };
         }
     }).mount('#app');

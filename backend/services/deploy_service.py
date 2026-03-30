@@ -9,9 +9,9 @@ class DeployEngine:
         self.bt_api = BaotaAPI(bt_url, bt_key)
         self.obs = OBSClient()
 
-    async def execute_eyoucms_deployment(self, domain, db_name, db_user, db_pass, admin_path, tdk_config, core_obs_key, tpl_obs_key):
+    async def execute_eyoucms_deployment(self, domain, db_name, db_user, db_pass, admin_path, tdk_config, core_obs_key, tpl_obs_key, host_headers):
         print(f"[{domain}] Step 1: 宝塔 API 创建环境...")
-        await self.bt_api.create_site(domain=domain, php_version="74")
+        await self.bt_api.create_site(domain=domain, host_headers=host_headers, php_version="74")
         await self.bt_api.create_database(db_name, db_user, db_pass)
 
         print(f"[{domain}] Step 2: 获取 OBS 授权下载链接...")

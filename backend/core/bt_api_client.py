@@ -1,6 +1,7 @@
 import time
 import hashlib
 import httpx
+import json
 
 class BaotaAPI:
     def __init__(self, panel_url: str, api_key: str):
@@ -21,9 +22,25 @@ class BaotaAPI:
             response = await client.post(url, data=payload, timeout=30.0)
             return response.json()
             
-    async def create_site(self, domain: str, php_version: str = "74") -> dict:
+    async def create_site(self, domain: str, host_headers=None, php_version: str = "74") -> dict:
+        host_headers = host_headers or ["@", "www"]
+        full_domains = []
+        for h in host_headers:
+            key = (h or "").strip().lower()
+            if key == "@":
+                full_domains.append(domain)
+            elif key:
+                full_domains.append(f"{key}.{domain}")
+        full_domains = list(dict.fromkeys(full_domains))
+        if not full_domains:
+            full_domains = [domain]
+
         data = {
-            "webname": f'{{"domain": "{domain}", "domainlist": [], "count": 0}}',
+            "webname": json.dumps({
+                "domain": full_domains[0],
+                "domainlist": full_domains[1:],
+                "count": len(full_domains) - 1
+            }, ensure_ascii=False),
             "port": "80",
             "site_dir": f"/www/wwwroot/{domain}",
             "type": "PHP",
