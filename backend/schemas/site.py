@@ -9,6 +9,8 @@ class SiteBase(BaseModel):
     template_key: str
     tdk_title: str
     admin_path: str
+    admin_username: Optional[str] = None
+    admin_password: Optional[str] = None
     status: str
     error_msg: Optional[str] = None
 

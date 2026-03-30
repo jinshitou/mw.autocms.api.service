@@ -104,6 +104,7 @@
                                     <th class="p-3">域名</th>
                                     <th class="p-3">绑定 IP</th>
                                     <th class="p-3">标题(T)摘要</th>
+                                    <th class="p-3">后台凭据</th>
                                     <th class="p-3">部署状态</th>
                                     <th class="p-3">创建时间</th>
                                     <th class="p-3 text-right pr-6">操作</th>
@@ -111,13 +112,20 @@
                             </thead>
                             <tbody class="divide-y divide-panelborder">
                                 <tr v-if="sites.length === 0">
-                                    <td colspan="7" class="p-8 text-center text-gray-500">暂无站点数据，去批量上站试试吧</td>
+                                    <td colspan="8" class="p-8 text-center text-gray-500">暂无站点数据，去批量上站试试吧</td>
                                 </tr>
                                 <tr v-for="site in sites" :key="site.id" class="hover:bg-gray-700/50 transition-colors">
                                     <td class="p-3"><input type="checkbox" :checked="selectedSiteIds.includes(site.id)" @change="toggleSelectSite(site.id, $event)" class="rounded bg-darkbg"></td>
                                     <td class="p-3 font-medium text-brand hover:underline cursor-pointer"><a :href="'http://' + site.domain" target="_blank">{{ site.domain }}</a></td>
                                     <td class="p-3 text-gray-400 font-mono text-xs">{{ site.bind_ip }}</td>
                                     <td class="p-3 text-gray-400 truncate max-w-[150px]" :title="site.tdk_title">{{ site.tdk_title || '-' }}</td>
+                                    <td class="p-3 text-gray-400 text-xs">
+                                        <div v-if="site.admin_username && site.admin_password" class="flex items-center gap-2">
+                                            <span class="font-mono">{{ site.admin_username }}/{{ site.admin_password }}</span>
+                                            <button @click="copySiteAdminCreds(site)" class="text-brand hover:text-white" title="复制后台账号密码"><i class="fa-solid fa-copy"></i></button>
+                                        </div>
+                                        <span v-else>-</span>
+                                    </td>
                                     <td class="p-3">
                                         <span v-if="site.status === 'success'" class="text-success border border-success/30 bg-success/10 px-1.5 py-0.5 rounded text-[10px]"><i class="fa-solid fa-check mr-1"></i>成功</span>
                                         <span v-else-if="site.status === 'deploying'" class="text-warning border border-warning/30 bg-warning/10 px-1.5 py-0.5 rounded text-[10px]"><i class="fa-solid fa-spinner fa-spin mr-1"></i>部署中</span>
@@ -246,6 +254,21 @@
                                 <div>
                                     <label class="block text-gray-300 text-xs font-bold mb-1">后台安全入口路径</label>
                                     <input v-model="deployForm.adminPath" type="text" class="w-full bg-darkbg border border-panelborder rounded px-4 py-3 text-sm text-gray-300 outline-none focus:border-brand" placeholder="如：console_v8x.php">
+                                </div>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="block text-gray-300 text-xs font-bold mb-1">后台管理员账号</label>
+                                        <input v-model="deployForm.adminUsername" type="text" class="w-full bg-darkbg border border-panelborder rounded px-4 py-3 text-sm text-gray-300 outline-none focus:border-brand" placeholder="如：admin88">
+                                    </div>
+                                    <div>
+                                        <label class="block text-gray-300 text-xs font-bold mb-1">后台管理员密码</label>
+                                        <input v-model="deployForm.adminPassword" type="text" class="w-full bg-darkbg border border-panelborder rounded px-4 py-3 text-sm text-gray-300 outline-none focus:border-brand" placeholder="如：Abc123456">
+                                    </div>
+                                </div>
+                                <div class="flex justify-end">
+                                    <button @click="regenAdminCredentials" class="text-xs bg-brand/20 text-brand border border-brand/40 px-3 py-1.5 rounded transition">
+                                        随机生成后台账号密码
+                                    </button>
                                 </div>
                                 <div>
                                     <label class="block text-gray-300 text-xs font-bold mb-1">失败重试次数（0-5）</label>
@@ -737,6 +760,30 @@
                     showToast(e, 'error');
                 }
             };
+            const copySiteAdminCreds = async (site) => {
+                if (!site?.admin_username || !site?.admin_password) return showToast('当前站点无后台凭据', 'error');
+                const text = `账号: ${site.admin_username}\n密码: ${site.admin_password}\n后台: http://${site.domain}/${site.admin_path}`;
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(text);
+                    } else {
+                        const ta = document.createElement('textarea');
+                        ta.value = text;
+                        ta.setAttribute('readonly', '');
+                        ta.style.position = 'fixed';
+                        ta.style.opacity = '0';
+                        document.body.appendChild(ta);
+                        ta.focus();
+                        ta.select();
+                        const ok = document.execCommand('copy');
+                        document.body.removeChild(ta);
+                        if (!ok) throw new Error('copy failed');
+                    }
+                    showToast(`已复制 ${site.domain} 的后台凭据`, 'success');
+                } catch (_) {
+                    showToast('复制后台凭据失败，请检查浏览器权限', 'error');
+                }
+            };
             const openSiteLogs = async (site) => {
                 activeLogSite.value = site;
                 showSiteLogsModal.value = true;
@@ -954,7 +1001,7 @@
             // ---- 批量建站控制台 ----
             const activeDrawer = ref(null);
             const hostHeaderOptions = ['@', 'www', 'm'];
-            const deployForm = reactive({ serverId: '', domainsText: '', adminPath: 'console_v8x.php', retryLimit: 1, selectedCore: null, selectedTheme: null, selectedTdk: null, hostHeaders: ['@', 'www'] });
+            const deployForm = reactive({ serverId: '', domainsText: '', adminPath: 'console_v8x.php', adminUsername: `admin${Math.floor(100 + Math.random() * 900)}`, adminPassword: Math.random().toString(36).slice(2, 10) + Math.floor(10 + Math.random() * 90), retryLimit: 1, selectedCore: null, selectedTheme: null, selectedTdk: null, hostHeaders: ['@', 'www'] });
             const domainSeedText = ref('');
             const lineCount = ref(0);
             const isDeploying = ref(false);
@@ -1015,6 +1062,12 @@
                 const idx = deployForm.hostHeaders.indexOf(host);
                 if (idx >= 0) deployForm.hostHeaders.splice(idx, 1);
                 else deployForm.hostHeaders.push(host);
+            };
+            const randomString = (chars, len) => Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+            const regenAdminCredentials = () => {
+                deployForm.adminUsername = `admin${randomString('0123456789', 3)}`;
+                deployForm.adminPassword = `${randomString('ABCDEFGHJKLMNPQRSTUVWXYZ', 2)}${randomString('abcdefghijkmnpqrstuvwxyz', 4)}${randomString('0123456789', 4)}`;
+                showToast('已重新生成后台账号密码', 'success');
             };
 
             const updateLineCount = () => { lineCount.value = deployForm.domainsText.split('\n').filter(l => l.trim().includes('|')).length; };
@@ -1157,8 +1210,16 @@
                 if (!Number.isInteger(retryLimit) || retryLimit < 0 || retryLimit > 5) {
                     return { ok: false, message: '失败重试次数必须是 0-5 的整数' };
                 }
+                const adminUsername = (deployForm.adminUsername || '').trim();
+                const adminPassword = (deployForm.adminPassword || '').trim();
+                if (!/^[A-Za-z0-9_.-]{3,32}$/.test(adminUsername)) {
+                    return { ok: false, message: '后台管理员账号不合法（3-32位，字母数字._-）' };
+                }
+                if (adminPassword.length < 6) {
+                    return { ok: false, message: '后台管理员密码至少 6 位' };
+                }
 
-                return { ok: true, sites, adminPath, hostHeaders: uniqueHeaders, retryLimit };
+                return { ok: true, sites, adminPath, adminUsername, adminPassword, hostHeaders: uniqueHeaders, retryLimit };
             };
 
             const submitDeploy = async () => {
@@ -1174,6 +1235,8 @@
                         core_key: deployForm.selectedCore.obs_path,
                         template_key: deployForm.selectedTheme.obs_path,
                         admin_path: validated.adminPath,
+                        admin_username: validated.adminUsername,
+                        admin_password: validated.adminPassword,
                         host_headers: validated.hostHeaders,
                         retry_limit: validated.retryLimit,
                         tdk_config: { title: deployForm.selectedTdk.title, keywords: deployForm.selectedTdk.keywords, description: deployForm.selectedTdk.description }
@@ -1192,11 +1255,11 @@
 
             return {
                 currentTab, apiStatus, toasts, showToast,
-                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, cleanupStuckDeployingSites, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, closeSiteLogsModal, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs, isSiteLogStreaming,
+                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, cleanupStuckDeployingSites, copySiteAdminCreds, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, closeSiteLogsModal, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs, isSiteLogStreaming,
                 servers, showAddServerModal, addForm, submitAddServer, testServer, updateServerSshPort, deleteServer, testingId,
                 tdks, showAddTdkModal, bulkTdkInput, parsedTdksCount, parseTdkLines, submitBulkTdk, deleteTdk, isSubmittingTdk,
                 templates, showUploadModal, uploadForm, isUploading, submitUpload, fileInput, deleteTemplate, uploadProgress, uploadedSizeText, totalSizeText, uploadSpeedText, closeUploadModal, cancelUpload, retryLastUpload, uploadRetryLimit, currentUploadAttempt, uploadLastFailed, hasRetryUploadPayload,
-                deployForm, activeDrawer, openDrawer, selectResource, filteredTemplates, lineCount, updateLineCount, isDeploying, submitDeploy, isFormValid, availableIpCount, copyAvailableIps, hostHeaderOptions, toggleHostHeader, parseAvailableIpPool, parsedIpSummary, parsedIpPreview, domainSeedText, generateDomainIpTemplate, onDeployServerChange
+                deployForm, activeDrawer, openDrawer, selectResource, filteredTemplates, lineCount, updateLineCount, isDeploying, submitDeploy, isFormValid, availableIpCount, copyAvailableIps, hostHeaderOptions, toggleHostHeader, parseAvailableIpPool, parsedIpSummary, parsedIpPreview, domainSeedText, generateDomainIpTemplate, regenAdminCredentials, onDeployServerChange
             };
         }
     }).mount('#app');

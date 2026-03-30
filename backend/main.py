@@ -15,12 +15,23 @@ Base.metadata.create_all(bind=engine)
 
 def ensure_schema_compatibility():
     inspector = inspect(engine)
-    if not inspector.has_table("servers"):
-        return
-    cols = {c["name"] for c in inspector.get_columns("servers")}
-    if "ssh_port" not in cols:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE servers ADD COLUMN ssh_port INTEGER DEFAULT 22"))
+    if inspector.has_table("servers"):
+        server_cols = {c["name"] for c in inspector.get_columns("servers")}
+        if "ssh_port" not in server_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE servers ADD COLUMN ssh_port INTEGER DEFAULT 22"))
+
+    if inspector.has_table("sites"):
+        site_cols = {c["name"] for c in inspector.get_columns("sites")}
+        statements = []
+        if "admin_username" not in site_cols:
+            statements.append("ALTER TABLE sites ADD COLUMN admin_username VARCHAR")
+        if "admin_password" not in site_cols:
+            statements.append("ALTER TABLE sites ADD COLUMN admin_password VARCHAR")
+        if statements:
+            with engine.begin() as conn:
+                for stmt in statements:
+                    conn.execute(text(stmt))
 
 
 ensure_schema_compatibility()

@@ -39,7 +39,7 @@ def _write_log(db, site_id, stage, message, level="info"):
 
 
 @celery_app.task(bind=True)
-def process_single_site(self, site_id, server_ip, domain, bind_ip, core_key, template_key, tdk_config, admin_path, host_headers, retry_limit, bt_url, bt_key, ssh_port=22):
+def process_single_site(self, site_id, server_ip, domain, bind_ip, core_key, template_key, tdk_config, admin_path, admin_username, admin_password, host_headers, retry_limit, bt_url, bt_key, ssh_port=22):
     retry_limit = max(0, min(int(retry_limit or 0), 5))
 
     def _is_retryable_error(message: str) -> bool:
@@ -92,6 +92,8 @@ def process_single_site(self, site_id, server_ip, domain, bind_ip, core_key, tem
             db_user=db_name, 
             db_pass=db_pass,
             admin_path=admin_path, 
+            admin_username=admin_username,
+            admin_password=admin_password,
             tdk_config=tdk_config, 
             core_obs_key=core_key,
             tpl_obs_key=template_key,

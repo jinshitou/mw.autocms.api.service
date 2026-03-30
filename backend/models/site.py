@@ -13,6 +13,8 @@ class Site(Base):
     template_key = Column(String, comment="使用的模板OBS路径")
     tdk_title = Column(String, comment="配置的TDK标题")
     admin_path = Column(String, comment="后台路径")
+    admin_username = Column(String, nullable=True, comment="后台账号")
+    admin_password = Column(String, nullable=True, comment="后台密码（明文展示）")
     
     status = Column(String, default="deploying", comment="状态: deploying, success, failed")
     error_msg = Column(Text, nullable=True, comment="失败时的错误信息")

@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 import ipaddress
 import re
+import random
+import string
 from schemas.deploy import DeployRequest
 from worker.deploy_tasks import process_single_site
 from core.database import get_db
@@ -36,6 +38,18 @@ def _validate_admin_path(admin_path: str) -> bool:
         return False
     return bool(ADMIN_PATH_REGEX.match(cleaned))
 
+
+def _gen_admin_username(domain: str) -> str:
+    seed = re.sub(r"[^a-z0-9]", "", (domain or "").lower())
+    if not seed:
+        seed = "admin"
+    return f"{seed[:8]}{''.join(random.choices(string.digits, k=3))}"
+
+
+def _gen_admin_password() -> str:
+    chars = string.ascii_letters + string.digits
+    return "".join(random.choices(chars, k=12))
+
 @router.post("/batch")
 async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_db)):
     if not request.sites:
@@ -60,6 +74,12 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
     retry_limit = int(request.retry_limit or 0)
     if retry_limit < 0 or retry_limit > 5:
         raise HTTPException(status_code=400, detail="retry_limit 仅支持 0-5")
+    req_admin_username = (request.admin_username or "").strip()
+    req_admin_password = (request.admin_password or "").strip()
+    if req_admin_username and not re.match(r"^[A-Za-z0-9_.-]{3,32}$", req_admin_username):
+        raise HTTPException(status_code=400, detail="admin_username 非法，仅允许 3-32 位字母数字._-")
+    if req_admin_password and len(req_admin_password) < 6:
+        raise HTTPException(status_code=400, detail="admin_password 至少 6 位")
 
     target_server = db.query(Server).filter(Server.id == request.server_id).first()
     
@@ -108,6 +128,8 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
         site_record.template_key = request.template_key
         site_record.tdk_title = request.tdk_config.get("title", "")
         site_record.admin_path = admin_path
+        site_record.admin_username = req_admin_username or _gen_admin_username(domain)
+        site_record.admin_password = req_admin_password or _gen_admin_password()
         site_record.status = "deploying"
         site_record.error_msg = None
         
@@ -126,6 +148,8 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
             template_key=request.template_key,
             tdk_config=request.tdk_config,
             admin_path=admin_path,
+            admin_username=site_record.admin_username,
+            admin_password=site_record.admin_password,
             host_headers=headers,
             retry_limit=retry_limit,
             ssh_port=int(getattr(target_server, "ssh_port", 22) or 22),
