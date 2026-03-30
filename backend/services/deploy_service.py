@@ -64,6 +64,9 @@ class DeployEngine:
         esc_title = str(tdk_config.get("title", "")).replace("'", "''")
         esc_keywords = str(tdk_config.get("keywords", "")).replace("'", "''")
         esc_desc = str(tdk_config.get("description", "")).replace("'", "''")
+        php_db_name = db_name.replace("\\", "\\\\").replace("'", "\\'")
+        php_db_user = db_user.replace("\\", "\\\\").replace("'", "\\'")
+        php_db_pass = db_pass.replace("\\", "\\\\").replace("'", "\\'")
         sql_path = f"/tmp/{db_name}_autocms.sql"
         esc_sql_path = shlex.quote(sql_path)
 
@@ -114,6 +117,47 @@ class DeployEngine:
                     f"rm -f {esc_sql_path}'"
                 ),
                 timeout_sec=180
+            )
+        )
+
+        db_php_config = (
+            "<?php\n"
+            "return [\n"
+            "    'type' => 'mysql',\n"
+            "    'hostname' => '127.0.0.1',\n"
+            "    'database' => '{db_name}',\n"
+            "    'username' => '{db_user}',\n"
+            "    'password' => '{db_pass}',\n"
+            "    'hostport' => '3306',\n"
+            "    'charset' => 'utf8',\n"
+            "    'prefix' => 'ey_',\n"
+            "];\n"
+        ).format(db_name=php_db_name, db_user=php_db_user, db_pass=php_db_pass)
+        await run_timed_step(
+            "ssh_db_config",
+            "SSH：写入数据库连接配置",
+            execute_remote_cmd(
+                self.server_ip,
+                self.ssh_port,
+                (
+                    "bash -lc 'set -euo pipefail; "
+                    "updated=0; "
+                    "for f in "
+                    f"{esc_site_dir}/data/conf/database.php "
+                    f"{esc_site_dir}/config/database.php "
+                    f"{esc_site_dir}/application/database.php; do "
+                    "if [ -f \"$f\" ]; then "
+                    "cp -f \"$f\" \"$f.bak_autocms\"; "
+                    f"cat > \"$f\" <<\"PHP\"\n{db_php_config}PHP\n"
+                    "updated=1; "
+                    "fi; "
+                    "done; "
+                    "if [ \"$updated\" -ne 1 ]; then "
+                    "echo \"未找到数据库配置文件（data/conf or config or application）\"; "
+                    "exit 1; "
+                    "fi'"
+                ),
+                timeout_sec=90
             )
         )
 
