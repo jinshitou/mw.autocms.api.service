@@ -14,7 +14,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
-    # 💡 魔法指令 1：强制忽略 ARM64 架构的内核警告，防止 Redis 自杀
+    # 保持这个，它在 Mac (ARM64) 和 Linux 上都安全
     command: redis-server --ignore-warnings ARM64-COW-BUG
 
   backend_api:
@@ -24,7 +24,8 @@ services:
     volumes:
       - ./backend:/app
       - ./fronttype:/fronttype:ro
-      - /root/.ssh:/root/.ssh:ro
+      # 💡 适配魔法：使用 ${HOME} 自动识别宿主机 SSH 路径
+      - ${HOME}/.ssh:/root/.ssh:ro
     ports:
       - "8230:8000"
     environment:
@@ -34,14 +35,13 @@ services:
       - db
       - redis
 
-  # 💡 魔法指令 2：失踪的 Celery 大军重新归队！
   celery_worker:
     build: ./backend
     restart: always
     command: celery -A worker.celery_app worker --loglevel=info --concurrency=4
     volumes:
       - ./backend:/app
-      - /root/.ssh:/root/.ssh:ro
+      - ${HOME}/.ssh:/root/.ssh:ro
     environment:
       - DATABASE_URL=postgresql://eyou_admin:eyou_secure_pass_2026@db:5432/eyou_saas
       - REDIS_URL=redis://redis:6379/0

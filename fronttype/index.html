@@ -88,6 +88,9 @@
                 <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg overflow-hidden flex-1 flex flex-col">
                     <div class="p-3 border-b border-panelborder bg-darkbg/50 flex gap-2">
                         <span class="text-xs text-gray-500 self-center">共 {{ siteTotal }} 条，当前第 {{ sitePage }} / {{ siteTotalPages || 1 }} 页</span>
+                        <button @click="cleanupStuckDeployingSites" class="bg-warning/20 text-warning border border-warning/50 hover:bg-warning/40 px-3 py-1.5 rounded text-xs transition-colors">
+                            清理超时部署
+                        </button>
                         <button @click="batchDeleteSites" :disabled="selectedSiteIds.length === 0" class="bg-danger/20 text-danger border border-danger/50 hover:bg-danger/40 px-3 py-1.5 rounded text-xs ml-auto transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                             批量删除 ({{ selectedSiteIds.length }})
                         </button>
@@ -645,6 +648,19 @@
                     showToast(e, 'error');
                 }
             };
+            const cleanupStuckDeployingSites = async () => {
+                const input = prompt('输入超时分钟数（默认 60）', '60');
+                if (input === null) return;
+                const timeoutMinutes = Number(input);
+                if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) return showToast('请输入有效的分钟数', 'error');
+                try {
+                    const res = await ax.post(`/sites/cleanup-stuck?timeout_minutes=${Math.floor(timeoutMinutes)}`);
+                    showToast(`已处理 ${res.marked_failed || 0} 条超时任务`, 'success');
+                    fetchSites();
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
             const openSiteLogs = async (site) => {
                 activeLogSite.value = site;
                 showSiteLogsModal.value = true;
@@ -817,7 +833,7 @@
 
             return {
                 currentTab, apiStatus, toasts, showToast,
-                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs,
+                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, cleanupStuckDeployingSites, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs,
                 servers, showAddServerModal, addForm, submitAddServer, testServer, deleteServer, testingId,
                 tdks, showAddTdkModal, bulkTdkInput, parsedTdksCount, parseTdkLines, submitBulkTdk, deleteTdk, isSubmittingTdk,
                 templates, showUploadModal, uploadForm, isUploading, submitUpload, fileInput, deleteTemplate, uploadProgress, uploadedSizeText, totalSizeText, uploadSpeedText, closeUploadModal,

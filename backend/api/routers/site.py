@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from datetime import datetime, timedelta, timezone
 
 from core.database import get_db
 from models.site import Site
@@ -73,3 +74,56 @@ def get_site_logs(site_id: int, limit: int = 200, db: Session = Depends(get_db))
     limit = max(1, min(limit, 1000))
     logs = db.query(SiteDeployLog).filter(SiteDeployLog.site_id == site_id).order_by(SiteDeployLog.id.asc()).limit(limit).all()
     return logs
+
+
+@router.post("/cleanup-stuck")
+def cleanup_stuck_sites(
+    timeout_minutes: int = 60,
+    limit: int = 200,
+    dry_run: bool = False,
+    db: Session = Depends(get_db)
+):
+    timeout_minutes = max(1, min(timeout_minutes, 10080))
+    limit = max(1, min(limit, 2000))
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=timeout_minutes)
+
+    stuck_sites = (
+        db.query(Site)
+        .filter(Site.status == "deploying")
+        .filter(Site.updated_at < cutoff)
+        .order_by(Site.updated_at.asc())
+        .limit(limit)
+        .all()
+    )
+    site_ids = [s.id for s in stuck_sites]
+
+    if dry_run:
+        return {
+            "status": "success",
+            "dry_run": True,
+            "timeout_minutes": timeout_minutes,
+            "matched": len(stuck_sites),
+            "site_ids": site_ids
+        }
+
+    for site in stuck_sites:
+        site.status = "failed"
+        if not site.error_msg:
+            site.error_msg = f"任务超时未完成（超过 {timeout_minutes} 分钟）"
+        db.add(
+            SiteDeployLog(
+                site_id=site.id,
+                level="error",
+                stage="timeout",
+                message=f"系统自动标记失败：deploying 状态超过 {timeout_minutes} 分钟"
+            )
+        )
+
+    db.commit()
+    return {
+        "status": "success",
+        "dry_run": False,
+        "timeout_minutes": timeout_minutes,
+        "marked_failed": len(stuck_sites),
+        "site_ids": site_ids
+    }
