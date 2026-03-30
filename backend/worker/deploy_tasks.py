@@ -51,8 +51,6 @@ def process_single_site(self, site_id, server_ip, domain, bind_ip, core_key, tem
         host_txt = ",".join(host_headers or [])
         _write_log(db, site_id, "start", f"开始部署: {domain} -> {bind_ip}，主机头: {host_txt}")
         _write_log(db, site_id, "bt", "正在调用宝塔 API 创建站点与数据库")
-        _write_log(db, site_id, "obs", "正在生成 OBS 临时下载链接并准备下发")
-        _write_log(db, site_id, "ssh", "正在通过 SSH 执行安装脚本")
 
         # 3. 执行真正的部署流水线 (注意这里的参数全部带上了名字)
         result = asyncio.run(engine.execute_eyoucms_deployment(
@@ -65,6 +63,7 @@ def process_single_site(self, site_id, server_ip, domain, bind_ip, core_key, tem
             core_obs_key=core_key,
             tpl_obs_key=template_key,
             host_headers=host_headers,
+            on_progress=lambda stage, message: _write_log(db, site_id, stage, message),
         ))
         
         # 4. 部署成功，更新数据库状态
