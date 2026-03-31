@@ -14,6 +14,8 @@ class SiteBase(BaseModel):
     admin_path: str
     admin_username: Optional[str] = None
     admin_password: Optional[str] = None
+    landing_page_id: Optional[int] = None
+    landing_page_name: Optional[str] = None
     https_enabled: Optional[bool] = False
     https_auto_renew: Optional[bool] = True
     https_expire_at: Optional[datetime] = None
@@ -50,6 +52,11 @@ class SiteBatchSwitchTdkRequest(BaseModel):
 class SiteBatchHttpsRequest(BaseModel):
     site_ids: List[int] = Field(default_factory=list)
     force_renew: bool = True
+
+
+class SiteBatchLandingRequest(BaseModel):
+    site_ids: List[int] = Field(default_factory=list)
+    landing_page_id: int
 
 
 class SiteDeployLogResponse(BaseModel):

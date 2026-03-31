@@ -11,13 +11,13 @@ from redis import asyncio as redis_async
 
 from core.database import get_db, SessionLocal
 from core.ssh_client import execute_remote_cmd
-from worker.deploy_tasks import process_batch_switch_tdk, process_batch_enable_https, process_batch_delete_sites
+from worker.deploy_tasks import process_batch_switch_tdk, process_batch_enable_https, process_batch_delete_sites, process_batch_switch_landing
 from models.site import Site
 from models.server import Server
-from models.asset import TDKConfig
+from models.asset import TDKConfig, LandingPagePackage
 from models.site_log import SiteDeployLog
 from services.audit_service import create_task_log, update_task_log, log_operation
-from schemas.site import SitePageResponse, SiteBatchDeleteRequest, SiteBatchSwitchTdkRequest, SiteBatchHttpsRequest, SiteDeployLogResponse
+from schemas.site import SitePageResponse, SiteBatchDeleteRequest, SiteBatchSwitchTdkRequest, SiteBatchHttpsRequest, SiteBatchLandingRequest, SiteDeployLogResponse
 
 router = APIRouter()
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -401,6 +401,39 @@ def batch_enable_https(payload: SiteBatchHttpsRequest, db: Session = Depends(get
         action="site.batch_enable_https.submit",
         message=f"提交批量配置HTTPS：{len(sites)} 个站点",
         detail={"site_ids": ids, "task_log_id": task_log.id, "task_id": task.id, "force_renew": bool(payload.force_renew)},
+    )
+    return {"status": "success", "queued": len(sites), "missing_ids": missing_ids, "task_log_id": task_log.id, "task_id": task.id}
+
+
+@router.post("/batch-switch-landing")
+def batch_switch_landing(payload: SiteBatchLandingRequest, db: Session = Depends(get_db)):
+    ids = sorted(set(payload.site_ids or []))
+    if not ids:
+        raise HTTPException(status_code=400, detail="site_ids 不能为空")
+    landing = db.query(LandingPagePackage).filter(LandingPagePackage.id == payload.landing_page_id).first()
+    if not landing:
+        raise HTTPException(status_code=404, detail="落地页不存在")
+    sites = db.query(Site).filter(Site.id.in_(ids)).all()
+    existing_ids = {s.id for s in sites}
+    missing_ids = [sid for sid in ids if sid not in existing_ids]
+    if not sites:
+        return {"status": "success", "queued": 0, "missing_ids": ids}
+
+    task_log = create_task_log(
+        db,
+        task_type="switch_landing_batch",
+        task_name="批量配置落地页",
+        message=f"已入队：{len(sites)} 个站点 -> {landing.name}",
+        detail={"site_ids": ids, "missing_ids": missing_ids, "landing_page_id": landing.id, "landing_page_name": landing.name},
+        status="queued",
+    )
+    task = process_batch_switch_landing.delay(task_log.id, ids, landing.id)
+    update_task_log(db, task_log.id, task_ref=task.id)
+    log_operation(
+        db,
+        action="site.batch_switch_landing.submit",
+        message=f"提交批量配置落地页：{len(sites)} 个站点 -> {landing.name}",
+        detail={"site_ids": ids, "landing_page_id": landing.id, "task_log_id": task_log.id, "task_id": task.id},
     )
     return {"status": "success", "queued": len(sites), "missing_ids": missing_ids, "task_log_id": task_log.id, "task_id": task.id}
 

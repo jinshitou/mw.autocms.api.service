@@ -9,6 +9,7 @@ from models.site import Site
 from models.server import Server
 from models.asset import TDKConfig
 from models.asset import TemplatePackage
+from models.asset import LandingPagePackage
 from models.site_log import SiteDeployLog
 from services.audit_service import update_task_log
 from services.audit_service import log_operation
@@ -24,6 +25,9 @@ from datetime import datetime, timezone
 import base64
 import shlex
 import re
+import tempfile
+import shutil
+import zipfile
 
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -232,6 +236,135 @@ async def _verify_https_enabled_remote(server: Server, domain: str) -> bool:
     check_cmd = f"bash -lc 'test -s {shlex.quote(cert_path)} && echo OK || true'"
     out = await execute_remote_cmd(server.main_ip, int(getattr(server, "ssh_port", 22) or 22), check_cmd, timeout_sec=20)
     return "OK" in (out or "")
+
+
+def _extract_zip_to_local_preview(zip_path: str, target_dir: str):
+    with tempfile.TemporaryDirectory(prefix="landing_unpack_") as tmp_dir:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(tmp_dir)
+
+        best_index = None
+        best_depth = None
+        for root, dirs, files in os.walk(tmp_dir):
+            dirs[:] = [d for d in dirs if d != "__MACOSX"]
+            if "index.html" not in files:
+                continue
+            rel = os.path.relpath(root, tmp_dir)
+            depth = 0 if rel == "." else rel.count(os.sep) + 1
+            if best_index is None or depth < best_depth:
+                best_index = os.path.join(root, "index.html")
+                best_depth = depth
+
+        if not best_index:
+            raise Exception("落地页压缩包缺少 index.html")
+        source_dir = os.path.dirname(best_index)
+
+        os.makedirs(target_dir, exist_ok=True)
+        for item in os.listdir(target_dir):
+            path = os.path.join(target_dir, item)
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+        for item in os.listdir(source_dir):
+            src = os.path.join(source_dir, item)
+            dst = os.path.join(target_dir, item)
+            if os.path.isdir(src):
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            else:
+                shutil.copy2(src, dst)
+
+
+async def _apply_landing_to_remote_site(server: Server, domain: str, obs_url: str, cache_id: str):
+    esc_site_dir = shlex.quote(f"/www/wwwroot/{domain}")
+    cache_file = f"/www/cache/autocms/landing_{cache_id}.zip"
+    esc_cache_file = shlex.quote(cache_file)
+    obs_url_b64 = base64.b64encode((obs_url or "").encode("utf-8")).decode("ascii")
+
+    # 先利用服务器缓存下载，避免重复消耗 OBS 流量。
+    fetch_cmd = (
+        "bash -lc 'set -euo pipefail; "
+        f"url=$(printf %s {obs_url_b64} | base64 -d); "
+        "mkdir -p /www/cache/autocms; "
+        f"if [ ! -s {esc_cache_file} ]; then wget -nv --timeout=25 --tries=2 -O {esc_cache_file} \"$url\"; fi'"
+    )
+    await execute_remote_cmd(server.main_ip, int(getattr(server, "ssh_port", 22) or 22), fetch_cmd, timeout_sec=180)
+
+    py_script = (
+        "import os, json, shutil, tempfile, zipfile\n"
+        f"site_dir = {json.dumps(f'/www/wwwroot/{domain}')}\n"
+        f"cache_file = {json.dumps(cache_file)}\n"
+        "target = os.path.join(site_dir, 'ldy')\n"
+        "if not os.path.isfile(cache_file) or os.path.getsize(cache_file) <= 0:\n"
+        "    print(json.dumps({'status': False, 'msg': '缓存zip不存在或为空'}, ensure_ascii=False)); raise SystemExit(0)\n"
+        "best_index = None\n"
+        "best_depth = None\n"
+        "tmp_dir = tempfile.mkdtemp(prefix='autocms_landing_')\n"
+        "try:\n"
+        "    with zipfile.ZipFile(cache_file, 'r') as zf:\n"
+        "        zf.extractall(tmp_dir)\n"
+        "    for root, dirs, files in os.walk(tmp_dir):\n"
+        "        dirs[:] = [d for d in dirs if d != '__MACOSX']\n"
+        "        if 'index.html' not in files:\n"
+        "            continue\n"
+        "        rel = os.path.relpath(root, tmp_dir)\n"
+        "        depth = 0 if rel == '.' else rel.count(os.sep) + 1\n"
+        "        if best_index is None or depth < best_depth:\n"
+        "            best_index = os.path.join(root, 'index.html')\n"
+        "            best_depth = depth\n"
+        "    if not best_index:\n"
+        "        print(json.dumps({'status': False, 'msg': '落地页压缩包缺少index.html'}, ensure_ascii=False)); raise SystemExit(0)\n"
+        "    src_dir = os.path.dirname(best_index)\n"
+        "    os.makedirs(target, exist_ok=True)\n"
+        "    for item in os.listdir(target):\n"
+        "        p = os.path.join(target, item)\n"
+        "        if os.path.isdir(p):\n"
+        "            shutil.rmtree(p, ignore_errors=True)\n"
+        "        else:\n"
+        "            try:\n"
+        "                os.remove(p)\n"
+        "            except Exception:\n"
+        "                pass\n"
+        "    for item in os.listdir(src_dir):\n"
+        "        src = os.path.join(src_dir, item)\n"
+        "        dst = os.path.join(target, item)\n"
+        "        if os.path.isdir(src):\n"
+        "            if os.path.exists(dst):\n"
+        "                shutil.rmtree(dst, ignore_errors=True)\n"
+        "            shutil.copytree(src, dst)\n"
+        "        else:\n"
+        "            shutil.copy2(src, dst)\n"
+        "    print(json.dumps({'status': True, 'msg': 'ok'}, ensure_ascii=False))\n"
+        "finally:\n"
+        "    shutil.rmtree(tmp_dir, ignore_errors=True)\n"
+    )
+    py_b64 = base64.b64encode(py_script.encode("utf-8")).decode("ascii")
+    remote_py = f"/tmp/autocms_apply_landing_{domain.replace('.', '_')}.py"
+    run_cmd = (
+        "bash -lc 'set -euo pipefail; "
+        "pybin=/www/server/panel/pyenv/bin/python3.7; "
+        "[ -x \"$pybin\" ] || pybin=/www/server/panel/pyenv/bin/python3; "
+        "[ -x \"$pybin\" ] || pybin=python3; "
+        f"printf %s {py_b64} | base64 -d > {shlex.quote(remote_py)}; "
+        f"\"$pybin\" {shlex.quote(remote_py)}; "
+        f"rm -f {shlex.quote(remote_py)}'"
+    )
+    out = await execute_remote_cmd(server.main_ip, int(getattr(server, "ssh_port", 22) or 22), run_cmd, timeout_sec=300)
+    parsed = None
+    for line in reversed((out or "").splitlines()):
+        text = line.strip()
+        if not text.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(text)
+            break
+        except Exception:
+            continue
+    if not isinstance(parsed, dict) or not parsed.get("status"):
+        raise Exception(str((parsed or {}).get("msg") or f"落地页下发失败: {(out or '').strip()[:300]}"))
 
 
 def _write_log(db, site_id, stage, message, level="info"):
@@ -532,6 +665,147 @@ def process_template_upload(self, task_log_id, file_path, pkg_type, name, origin
                 os.remove(file_path)
         except Exception:
             pass
+        db.close()
+
+
+@celery_app.task(bind=True)
+def process_landing_upload(self, task_log_id, file_path, name, remark="", username=None, landing_page_id=None, original_filename=""):
+    db = SessionLocal()
+    try:
+        update_task_log(db, int(task_log_id), status="running", message=f"落地页上传执行中: {name}", task_ref=self.request.id)
+        if not os.path.exists(file_path):
+            raise Exception("临时文件不存在，无法上传")
+
+        with open(file_path, "rb") as fp:
+            file_bytes = fp.read()
+        if not file_bytes:
+            raise Exception("上传文件为空")
+
+        safe_filename = f"{uuid.uuid4().hex[:8]}_{(original_filename or 'landing.zip')}"
+        obs_key = f"eyoucms/landing/{safe_filename}"
+        _obs_client.upload_file_bytes(obs_key, file_bytes)
+
+        if landing_page_id:
+            item = db.query(LandingPagePackage).filter(LandingPagePackage.id == int(landing_page_id)).first()
+            if not item:
+                raise Exception("落地页记录不存在，无法覆盖")
+            item.name = str(name or item.name)
+            item.remark = str(remark or "")
+            item.username = username or item.username
+            item.obs_path = obs_key
+        else:
+            item = LandingPagePackage(
+                name=str(name or "").strip() or f"落地页-{uuid.uuid4().hex[:6]}",
+                obs_path=obs_key,
+                remark=str(remark or ""),
+                username=(username or None),
+            )
+            db.add(item)
+        db.commit()
+        db.refresh(item)
+
+        local_dir = f"/app/landing_pages/{item.id}"
+        _extract_zip_to_local_preview(file_path, local_dir)
+        preview_url = f"/landing_pages/{item.id}/index.html"
+
+        action = "landing.upload.cover" if landing_page_id else "landing.upload"
+        log_operation(
+            db,
+            action=action,
+            message=f"{'覆盖上传' if landing_page_id else '上传'}落地页完成: {item.name}",
+            detail={"landing_page_id": item.id, "obs_key": obs_key, "preview_url": preview_url, "username": username},
+        )
+        update_task_log(
+            db,
+            int(task_log_id),
+            status="success",
+            message=f"落地页上传完成: {item.name}",
+            detail={"landing_page_id": item.id, "obs_key": obs_key, "preview_url": preview_url},
+            task_ref=self.request.id,
+        )
+        return {"landing_page_id": item.id, "obs_key": obs_key, "preview_url": preview_url}
+    except Exception as exc:
+        update_task_log(
+            db,
+            int(task_log_id),
+            status="failed",
+            message=f"落地页上传失败: {exc}",
+            detail={"name": name, "error": str(exc), "landing_page_id": landing_page_id},
+            task_ref=self.request.id,
+        )
+        raise
+    finally:
+        try:
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception:
+            pass
+        db.close()
+
+
+@celery_app.task(bind=True)
+def process_batch_switch_landing(self, task_log_id, site_ids, landing_page_id):
+    db = SessionLocal()
+    try:
+        update_task_log(db, int(task_log_id), status="running", message="批量配置落地页执行中", task_ref=self.request.id)
+        landing = db.query(LandingPagePackage).filter(LandingPagePackage.id == int(landing_page_id)).first()
+        if not landing:
+            raise Exception("落地页不存在")
+        obs_url = _obs_client.get_presigned_url(landing.obs_path)
+        if not obs_url:
+            raise Exception("落地页OBS临时链接生成失败")
+        cache_id = uuid.uuid5(uuid.NAMESPACE_DNS, str(landing.obs_path)).hex[:16]
+
+        sites = db.query(Site).filter(Site.id.in_(site_ids or [])).all()
+        server_map = {s.id: s for s in db.query(Server).all()}
+        done = 0
+        failed = []
+        for site in sites:
+            server = server_map.get(site.server_id)
+            if not server:
+                failed.append({"site_id": site.id, "domain": site.domain, "reason": "找不到对应服务器"})
+                db.add(SiteDeployLog(site_id=site.id, level="error", stage="landing", message="配置落地页失败：找不到对应服务器"))
+                db.commit()
+                continue
+            try:
+                asyncio.run(_apply_landing_to_remote_site(server, site.domain, obs_url, cache_id))
+                site.landing_page_id = int(landing.id)
+                site.landing_page_name = landing.name
+                db.add(SiteDeployLog(site_id=site.id, level="success", stage="landing", message=f"落地页已配置: {landing.name}"))
+                db.commit()
+                done += 1
+            except Exception as exc:
+                failed.append({"site_id": site.id, "domain": site.domain, "reason": str(exc)})
+                db.add(SiteDeployLog(site_id=site.id, level="error", stage="landing", message=f"配置落地页失败: {exc}"))
+                db.commit()
+
+        status = "success" if not failed else ("success" if done > 0 else "failed")
+        update_task_log(
+            db,
+            int(task_log_id),
+            status=status,
+            message=f"批量配置落地页完成：成功 {done}，失败 {len(failed)}",
+            detail={"site_ids": site_ids, "landing_page_id": int(landing_page_id), "landing_page_name": landing.name, "done": done, "failed": failed},
+            task_ref=self.request.id,
+        )
+        log_operation(
+            db,
+            action="site.batch_switch_landing.done",
+            message=f"批量配置落地页完成：成功 {done}，失败 {len(failed)}",
+            detail={"site_ids": site_ids, "landing_page_id": int(landing_page_id), "done": done, "failed": failed},
+        )
+        return {"done": done, "failed": failed}
+    except Exception as exc:
+        update_task_log(
+            db,
+            int(task_log_id),
+            status="failed",
+            message=f"批量配置落地页失败: {exc}",
+            detail={"site_ids": site_ids, "landing_page_id": landing_page_id, "error": str(exc)},
+            task_ref=self.request.id,
+        )
+        raise
+    finally:
         db.close()
 
 

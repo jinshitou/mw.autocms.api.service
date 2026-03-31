@@ -52,10 +52,17 @@
             <div
                 v-for="msg in toasts"
                 :key="msg.id"
-                :class="toastClass(msg.type)"
+                :class="toastClassWithPointer(msg.type)"
             >
                 <i :class="toastIcon(msg.type)"></i>
-                {{ msg.text }}
+                <span class="mr-2">{{ msg.text }}</span>
+                <button
+                    v-if="msg.type === 'error'"
+                    @click.stop="copyToastText(msg.text)"
+                    class="ml-auto text-[11px] px-2 py-0.5 rounded border border-white/30 hover:bg-white/15"
+                >
+                    复制
+                </button>
             </div>
         </transition-group>
     </div>
@@ -90,6 +97,9 @@
                 </button>
                 <button @click="currentTab = 'templates'" :class="['w-full px-3 py-2 rounded-lg flex items-center transition-colors text-sm', currentTab === 'templates' ? 'bg-brand/10 text-brand font-bold' : 'text-gray-400 hover:bg-panelborder hover:text-white']">
                     <i class="fa-solid fa-box-archive w-6 text-center"></i><span class="ml-2">CMS 包与模板库</span>
+                </button>
+                <button @click="currentTab = 'landing_pages'" :class="['w-full px-3 py-2 rounded-lg flex items-center transition-colors text-sm', currentTab === 'landing_pages' ? 'bg-brand/10 text-brand font-bold' : 'text-gray-400 hover:bg-panelborder hover:text-white']">
+                    <i class="fa-solid fa-file-code w-6 text-center"></i><span class="ml-2">落地页管理</span>
                 </button>
 
                 <div class="text-xs font-bold text-gray-500 mb-2 uppercase px-3 mt-6">生产控制台</div>
@@ -127,23 +137,52 @@
                     </div>
                     <div class="overflow-x-auto pb-2">
                         <div class="flex gap-3 min-w-max">
-                            <button
+                            <div
                                 v-for="stat in serverStatusCards"
                                 :key="stat.server_id"
                                 @click="openServerStatusDrawer(stat)"
-                                class="w-[300px] text-left rounded-lg p-3 transition border border-cyan-500/30 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 hover:border-cyan-300 hover:shadow-[0_0_18px_rgba(34,211,238,0.35)]"
+                                class="w-[300px] text-left rounded-lg p-3 transition border border-cyan-500/30 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 hover:border-cyan-300 hover:shadow-[0_0_18px_rgba(34,211,238,0.35)] cursor-pointer"
                             >
                                 <div class="flex items-center justify-between">
                                     <div class="font-bold text-cyan-200 truncate tracking-wide">{{ stat.name }}</div>
-                                    <div class="text-[11px] text-cyan-400/80">{{ stat.main_ip }}</div>
+                                    <div class="flex items-center gap-2">
+                                        <div class="text-[11px] text-cyan-400/80">{{ stat.main_ip }}</div>
+                                        <button @click.stop="refreshOneServerStatus(stat.server_id)" class="text-[10px] px-2 py-0.5 rounded border border-cyan-500/40 text-cyan-200 hover:bg-cyan-500/20">
+                                            刷新
+                                        </button>
+                                    </div>
                                 </div>
-                                <div class="mt-2 space-y-1 text-[11px] text-gray-300">
-                                    <div class="flex items-center justify-between"><span>CPU</span><span class="text-cyan-200">{{ stat.cpu_percent ?? '--' }}%</span></div>
-                                    <div class="h-1 rounded bg-slate-700 overflow-hidden"><div class="h-full bg-cyan-400" :style="{width: Math.max(0, Math.min(100, Number(stat.cpu_percent || 0))) + '%'}"></div></div>
-                                    <div class="flex items-center justify-between"><span>内存</span><span class="text-cyan-200">{{ stat.memory_percent ?? '--' }}%</span></div>
-                                    <div class="h-1 rounded bg-slate-700 overflow-hidden"><div class="h-full bg-blue-400" :style="{width: Math.max(0, Math.min(100, Number(stat.memory_percent || 0))) + '%'}"></div></div>
-                                    <div class="flex items-center justify-between"><span>硬盘</span><span class="text-cyan-200">{{ stat.disk_percent ?? '--' }}%</span></div>
-                                    <div class="h-1 rounded bg-slate-700 overflow-hidden"><div class="h-full bg-violet-400" :style="{width: Math.max(0, Math.min(100, Number(stat.disk_percent || 0))) + '%'}"></div></div>
+                                <div class="mt-3 flex items-center justify-between text-[10px] text-gray-300">
+                                    <div class="flex flex-col items-center gap-1">
+                                        <div class="relative w-14 h-14">
+                                            <svg viewBox="0 0 40 40" class="w-14 h-14 -rotate-90">
+                                                <circle cx="20" cy="20" r="16" stroke="rgba(71,85,105,0.5)" stroke-width="4" fill="none"></circle>
+                                                <circle cx="20" cy="20" r="16" :stroke="ringColor(Number(stat.cpu_percent || 0), 'cpu')" stroke-width="4" fill="none" stroke-linecap="round" :style="ringStyle(Number(stat.cpu_percent || 0))"></circle>
+                                            </svg>
+                                            <div class="absolute inset-0 flex items-center justify-center text-[10px] text-cyan-200 font-bold">{{ formatPercent(stat.cpu_percent) }}</div>
+                                        </div>
+                                        <span>CPU</span>
+                                    </div>
+                                    <div class="flex flex-col items-center gap-1">
+                                        <div class="relative w-14 h-14">
+                                            <svg viewBox="0 0 40 40" class="w-14 h-14 -rotate-90">
+                                                <circle cx="20" cy="20" r="16" stroke="rgba(71,85,105,0.5)" stroke-width="4" fill="none"></circle>
+                                                <circle cx="20" cy="20" r="16" :stroke="ringColor(Number(stat.memory_percent || 0), 'memory')" stroke-width="4" fill="none" stroke-linecap="round" :style="ringStyle(Number(stat.memory_percent || 0))"></circle>
+                                            </svg>
+                                            <div class="absolute inset-0 flex items-center justify-center text-[10px] text-cyan-200 font-bold">{{ formatPercent(stat.memory_percent) }}</div>
+                                        </div>
+                                        <span>内存</span>
+                                    </div>
+                                    <div class="flex flex-col items-center gap-1">
+                                        <div class="relative w-14 h-14">
+                                            <svg viewBox="0 0 40 40" class="w-14 h-14 -rotate-90">
+                                                <circle cx="20" cy="20" r="16" stroke="rgba(71,85,105,0.5)" stroke-width="4" fill="none"></circle>
+                                                <circle cx="20" cy="20" r="16" :stroke="ringColor(Number(stat.disk_percent || 0), 'disk')" stroke-width="4" fill="none" stroke-linecap="round" :style="ringStyle(Number(stat.disk_percent || 0))"></circle>
+                                            </svg>
+                                            <div class="absolute inset-0 flex items-center justify-center text-[10px] text-cyan-200 font-bold">{{ formatPercent(stat.disk_percent) }}</div>
+                                        </div>
+                                        <span>硬盘</span>
+                                    </div>
                                 </div>
                                 <div class="mt-2 flex items-center justify-between text-[11px]">
                                     <span class="text-cyan-300/90">站点 {{ stat.site_count }}</span>
@@ -153,7 +192,7 @@
                                     <span :class="stat.bt_ok ? 'text-emerald-400' : 'text-rose-400'">BT {{ stat.bt_ok ? 'OK' : '异常' }}</span>
                                     <span :class="stat.ssh_ok ? 'text-emerald-400' : 'text-rose-400'">SSH {{ stat.ssh_ok ? 'OK' : '异常' }}</span>
                                 </div>
-                            </button>
+                            </div>
                             <div v-if="serverStatusCards.length === 0" class="text-xs text-gray-500 py-5 px-2">暂无服务器状态数据</div>
                         </div>
                     </div>
@@ -164,6 +203,9 @@
                         <span class="text-xs text-gray-500 self-center">共 {{ siteTotal }} 条，当前第 {{ sitePage }} / {{ siteTotalPages || 1 }} 页</span>
                         <button v-if="selectedSiteIds.length > 0" @click="openBatchTdkDrawer" class="bg-brand/20 text-brand border border-brand/50 hover:bg-brand/40 px-3 py-1.5 rounded text-xs transition-colors">
                             批量切换TDK ({{ selectedSiteIds.length }})
+                        </button>
+                        <button v-if="selectedSiteIds.length > 0" @click="openBatchLandingDrawer" class="bg-cyan-500/20 text-cyan-300 border border-cyan-400/50 hover:bg-cyan-500/35 px-3 py-1.5 rounded text-xs transition-colors">
+                            批量配置落地页 ({{ selectedSiteIds.length }})
                         </button>
                         <button v-if="selectedSiteIds.length > 0" @click="batchEnableHttps" class="bg-emerald-500/20 text-emerald-300 border border-emerald-400/50 hover:bg-emerald-500/35 px-3 py-1.5 rounded text-xs transition-colors">
                             批量配置HTTPS ({{ selectedSiteIds.length }})
@@ -184,6 +226,7 @@
                                     <th class="p-3">域名</th>
                                     <th class="p-3">绑定 IP</th>
                                     <th class="p-3">TDK</th>
+                                    <th class="p-3">落地页</th>
                                     <th class="p-3">HTTPS</th>
                                     <th class="p-3">后台凭据</th>
                                     <th class="p-3">部署状态</th>
@@ -193,7 +236,7 @@
                             </thead>
                             <tbody class="divide-y divide-panelborder">
                                 <tr v-if="sites.length === 0">
-                                    <td colspan="9" class="p-8 text-center text-gray-500">暂无站点数据，去批量上站试试吧</td>
+                                    <td colspan="10" class="p-8 text-center text-gray-500">暂无站点数据，去批量上站试试吧</td>
                                 </tr>
                                 <tr v-for="site in sites" :key="site.id" class="hover:bg-gray-700/50 transition-colors">
                                     <td class="p-3"><input type="checkbox" :checked="selectedSiteIds.includes(site.id)" @change="toggleSelectSite(site.id, $event)" class="rounded bg-darkbg"></td>
@@ -210,6 +253,10 @@
                                                 <div class="mt-1"><span class="text-gray-400">Description:</span> {{ site.tdk_description || '-' }}</div>
                                             </div>
                                         </div>
+                                    </td>
+                                    <td class="p-3 text-gray-300 text-xs">
+                                        <span v-if="site.landing_page_name" class="px-2 py-0.5 rounded border border-cyan-400/40 text-cyan-200 bg-cyan-500/10">{{ site.landing_page_name }}</span>
+                                        <span v-else class="text-gray-500">-</span>
                                     </td>
                                     <td class="p-3 text-gray-400 text-xs">
                                         <button
@@ -241,6 +288,7 @@
                                     <td class="p-3 text-right pr-4 space-x-3">
                                         <button @click="openSiteLogs(site)" class="text-gray-300 hover:text-white" title="查看日志"><i class="fa-solid fa-file-lines"></i></button>
                                         <button @click="openSingleTdkDrawer(site)" class="text-brand hover:text-white" title="修改TDK"><i class="fa-solid fa-pen-to-square"></i></button>
+                                        <button @click="openSingleLandingDrawer(site)" class="text-cyan-300 hover:text-white" title="配置落地页"><i class="fa-solid fa-file-code"></i></button>
                                         <button @click="deleteSite(site)" class="text-danger hover:text-red-400" title="删除记录"><i class="fa-solid fa-trash"></i></button>
                                         <a href="#" @click.prevent="openSiteAdmin(site)" class="text-gray-400 hover:text-white" title="进入后台"><i class="fa-solid fa-arrow-right-to-bracket"></i></a>
                                     </td>
@@ -385,6 +433,72 @@
                             <div class="flex-1 overflow-y-auto p-3 space-y-2">
                                 <div v-if="filteredUploadTaskLogs.length === 0" class="text-xs text-gray-500 py-6 text-center">当前筛选下暂无上传任务</div>
                                 <div v-for="item in filteredUploadTaskLogs" :key="'upload-task-'+item.id" class="bg-darkbg/60 border border-panelborder rounded p-3">
+                                    <div class="text-sm text-gray-200">{{ item.task_name }}</div>
+                                    <div class="text-sm mt-1" :class="taskStatusMeta(item.status).class">
+                                        {{ taskStatusMeta(item.status).emoji }} {{ taskStatusMeta(item.status).label }} · {{ item.message || '-' }}
+                                    </div>
+                                    <div class="text-xs text-gray-500 mt-1">{{ new Date(item.created_at).toLocaleString() }}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div v-show="currentTab === 'landing_pages'" class="h-full flex flex-col w-full max-w-[1600px] mx-auto">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold text-white">🧩 落地页管理</h2>
+                    <div class="flex gap-2">
+                        <button @click="fetchLandingPages" class="bg-panelborder hover:bg-gray-600 text-white px-4 py-2 rounded text-sm shadow"><i class="fa-solid fa-rotate-right mr-1"></i> 刷新列表</button>
+                        <button @click="openLandingUploadModal()" class="bg-brand hover:bg-brand/80 text-white px-4 py-2 rounded text-sm font-bold shadow"><i class="fa-solid fa-cloud-arrow-up mr-1"></i> 上传落地页</button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-12 gap-4 flex-1 min-h-0">
+                    <div class="col-span-8 min-h-0">
+                        <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg overflow-hidden h-full">
+                            <table class="w-full text-left text-sm text-gray-300">
+                                <thead class="bg-gray-800/50 text-xs text-gray-400 border-b border-panelborder">
+                                    <tr>
+                                        <th class="px-6 py-4">名称</th>
+                                        <th class="px-6 py-4">备注</th>
+                                        <th class="px-6 py-4">用户名</th>
+                                        <th class="px-6 py-4">时间</th>
+                                        <th class="px-6 py-4 text-right">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-if="landingPages.length === 0">
+                                        <td colspan="5" class="px-6 py-10 text-center text-gray-500">暂无落地页资源</td>
+                                    </tr>
+                                    <tr v-for="item in landingPages" :key="'landing-'+item.id" class="border-b border-panelborder hover:bg-gray-700/20">
+                                        <td class="px-6 py-4 font-bold text-white">{{ item.name }}</td>
+                                        <td class="px-6 py-4 text-gray-400 max-w-[360px] truncate">{{ item.remark || '-' }}</td>
+                                        <td class="px-6 py-4 text-gray-400">{{ item.username || '-' }}</td>
+                                        <td class="px-6 py-4 text-gray-500 text-xs">{{ new Date(item.created_at).toLocaleString() }}</td>
+                                        <td class="px-6 py-4 text-right space-x-2">
+                                            <button @click="previewLanding(item)" class="text-xs text-cyan-300 hover:underline">预览</button>
+                                            <button @click="renameLanding(item)" class="text-xs text-brand hover:underline">改名/备注</button>
+                                            <button @click="openLandingUploadModal(item)" class="text-xs text-warning hover:underline">上传覆盖</button>
+                                            <button @click="deleteLanding(item)" class="text-xs text-danger hover:underline">删除</button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="col-span-4 min-h-0">
+                        <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg h-full flex flex-col overflow-hidden">
+                            <div class="px-4 py-3 border-b border-panelborder text-sm font-bold text-gray-200">落地页任务日志（自动刷新）</div>
+                            <div class="px-3 py-2 border-b border-panelborder flex flex-wrap gap-2">
+                                <button @click="landingTaskStatusFilter = 'all'" :class="['text-xs px-2 py-1 rounded border', landingTaskStatusFilter === 'all' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">全部</button>
+                                <button @click="landingTaskStatusFilter = 'queued'" :class="['text-xs px-2 py-1 rounded border', landingTaskStatusFilter === 'queued' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">排队中</button>
+                                <button @click="landingTaskStatusFilter = 'running'" :class="['text-xs px-2 py-1 rounded border', landingTaskStatusFilter === 'running' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">执行中</button>
+                                <button @click="landingTaskStatusFilter = 'success'" :class="['text-xs px-2 py-1 rounded border', landingTaskStatusFilter === 'success' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">成功</button>
+                                <button @click="landingTaskStatusFilter = 'failed'" :class="['text-xs px-2 py-1 rounded border', landingTaskStatusFilter === 'failed' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">失败</button>
+                            </div>
+                            <div class="flex-1 overflow-y-auto p-3 space-y-2">
+                                <div v-if="filteredLandingTaskLogs.length === 0" class="text-xs text-gray-500 py-6 text-center">当前筛选下暂无落地页任务</div>
+                                <div v-for="item in filteredLandingTaskLogs" :key="'landing-task-'+item.id" class="bg-darkbg/60 border border-panelborder rounded p-3">
                                     <div class="text-sm text-gray-200">{{ item.task_name }}</div>
                                     <div class="text-sm mt-1" :class="taskStatusMeta(item.status).class">
                                         {{ taskStatusMeta(item.status).emoji }} {{ taskStatusMeta(item.status).label }} · {{ item.message || '-' }}
@@ -602,7 +716,17 @@
                 </div>
                 <div>
                     <label class="block text-gray-300 text-sm mb-1">选择 ZIP 压缩包 <span class="text-danger">*</span></label>
-                    <input type="file" ref="fileInput" accept=".zip" class="w-full text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-gray-700 file:text-white hover:file:bg-gray-600 cursor-pointer">
+                    <div
+                        @dragover.prevent="isTemplateDragOver = true"
+                        @dragleave.prevent="isTemplateDragOver = false"
+                        @drop.prevent="onTemplateFileDrop"
+                        :class="['border rounded p-4 text-sm transition cursor-pointer', isTemplateDragOver ? 'border-brand bg-brand/10' : 'border-panelborder bg-darkbg/40']"
+                        @click="fileInput?.click()"
+                    >
+                        <div class="text-gray-300">拖拽 zip 文件到这里，或点击选择文件</div>
+                        <div class="text-xs text-gray-500 mt-1">{{ templateUploadFile?.name || '未选择文件' }}</div>
+                    </div>
+                    <input type="file" ref="fileInput" @change="onTemplateFileChange" accept=".zip" class="hidden">
                 </div>
                 <div v-if="isUploading || uploadProgress > 0" class="bg-gray-800/70 border border-panelborder rounded p-3">
                     <div class="flex items-center justify-between text-xs mb-1">
@@ -631,6 +755,44 @@
                 </button>
                 <button @click="submitUpload" :disabled="isUploading" class="bg-brand text-white px-4 py-2 rounded font-bold disabled:opacity-50">
                     <i :class="['fa-solid mr-1', isUploading ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up']"></i> {{ isUploading ? '大包直传中(防阻塞)...' : '开始上传' }}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="showLandingUploadModal" class="fixed inset-0 z-50 flex items-center justify-center modal-bg">
+        <div class="bg-panelbg border border-panelborder rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
+            <div class="px-6 py-4 border-b border-panelborder flex justify-between items-center">
+                <h3 class="font-bold text-white">{{ landingUploadForm.id ? '覆盖上传落地页' : '上传落地页' }}</h3>
+            </div>
+            <div class="p-6 space-y-4">
+                <div>
+                    <label class="block text-gray-300 text-sm mb-1">落地页名称 <span class="text-danger">*</span></label>
+                    <input v-model="landingUploadForm.name" type="text" class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-white outline-none focus:border-brand">
+                </div>
+                <div>
+                    <label class="block text-gray-300 text-sm mb-1">备注</label>
+                    <input v-model="landingUploadForm.remark" type="text" class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-white outline-none focus:border-brand">
+                </div>
+                <div>
+                    <label class="block text-gray-300 text-sm mb-1">选择 ZIP 压缩包 <span class="text-danger">*</span></label>
+                    <div
+                        @dragover.prevent="isLandingDragOver = true"
+                        @dragleave.prevent="isLandingDragOver = false"
+                        @drop.prevent="onLandingFileDrop"
+                        :class="['border rounded p-4 text-sm transition cursor-pointer', isLandingDragOver ? 'border-brand bg-brand/10' : 'border-panelborder bg-darkbg/40']"
+                        @click="landingFileInput?.click()"
+                    >
+                        <div class="text-gray-300">拖拽 zip 文件到这里，或点击选择文件</div>
+                        <div class="text-xs text-gray-500 mt-1">{{ landingUploadFile?.name || '未选择文件' }}</div>
+                    </div>
+                    <input type="file" ref="landingFileInput" @change="onLandingFileChange" accept=".zip" class="hidden">
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-panelborder flex justify-end gap-3">
+                <button @click="showLandingUploadModal = false" :disabled="isLandingUploading" class="text-gray-400 hover:text-white disabled:opacity-50">取消</button>
+                <button @click="submitLandingUpload" :disabled="isLandingUploading" class="bg-brand text-white px-4 py-2 rounded font-bold disabled:opacity-50">
+                    <i :class="['fa-solid mr-1', isLandingUploading ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up']"></i> {{ isLandingUploading ? '上传中...' : '开始上传' }}
                 </button>
             </div>
         </div>
@@ -731,6 +893,30 @@
                 <div v-for="tdk in tdks" :key="tdk.id" @click="applyTdkToTargets(tdk)" class="bg-darkbg border border-panelborder p-4 rounded-lg cursor-pointer hover:border-brand transition group">
                     <div class="font-bold text-white group-hover:text-brand">{{ tdk.name }}</div>
                     <div class="text-xs text-gray-500 mt-1 truncate">{{ tdk.title }}</div>
+                </div>
+            </div>
+        </div>
+    </transition>
+
+    <transition name="drawer-overlay">
+        <div v-if="showLandingSwitchDrawer" @click="closeLandingSwitchDrawer" class="absolute inset-0 z-[55] bg-black/50 backdrop-blur-sm"></div>
+    </transition>
+    <transition name="drawer">
+        <div v-if="showLandingSwitchDrawer" class="absolute right-0 top-0 bottom-0 w-[420px] bg-panelbg border-l border-panelborder z-[60] shadow-2xl flex flex-col">
+            <div class="px-6 py-4 border-b border-panelborder flex justify-between items-center bg-gray-800/80">
+                <h3 class="text-lg font-bold text-white">选择落地页</h3>
+                <button @click="closeLandingSwitchDrawer" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+            <div class="px-6 py-3 text-xs text-gray-400 border-b border-panelborder">{{ landingSwitchContextLabel }}</div>
+            <div class="flex-1 overflow-y-auto p-4 space-y-3">
+                <div v-if="landingPages.length === 0" class="text-center text-gray-500 mt-10">暂无落地页，请先上传。</div>
+                <div v-for="item in landingPages" :key="'landing-drawer-'+item.id" @click="applyLandingToTargets(item)" class="bg-darkbg border border-panelborder p-4 rounded-lg cursor-pointer hover:border-brand transition group">
+                    <div class="flex items-center justify-between">
+                        <div class="font-bold text-white group-hover:text-brand">{{ item.name }}</div>
+                        <button @click.stop="previewLanding(item)" class="text-xs text-cyan-300 hover:underline">预览</button>
+                    </div>
+                    <div class="text-xs text-gray-500 mt-1 truncate">{{ item.remark || '-' }}</div>
+                    <div class="text-[11px] text-gray-500 mt-1">{{ new Date(item.created_at).toLocaleString() }}</div>
                 </div>
             </div>
         </div>
@@ -960,8 +1146,13 @@
                 toasts.value.push({ id, text: String(text), type });
                 setTimeout(() => { toasts.value = toasts.value.filter(t => t.id !== id); }, 5000);
             };
+            const copyToastText = async (text) => {
+                const ok = await copyText(String(text || ''));
+                showToast(ok ? '错误信息已复制' : '复制失败，请检查浏览器权限', ok ? 'success' : 'error');
+            };
             const toastMeta = (type) => TOAST_THEME_MAP[String(type || '').toLowerCase()] || TOAST_THEME_MAP.info;
             const toastClass = (type) => ['px-4 py-2 rounded-lg border shadow-lg text-sm flex items-center backdrop-blur-sm', toastMeta(type).className];
+            const toastClassWithPointer = (type) => [...toastClass(type), 'pointer-events-auto'];
             const toastIcon = (type) => ['fa-solid mr-2', toastMeta(type).icon];
             const openUiDialog = (opts = {}) => new Promise((resolve) => {
                 uiDialog.visible = true;
@@ -1166,6 +1357,10 @@
             const tdkSwitchTargetIds = ref([]);
             const tdkSwitchContextLabel = ref('');
             const isSwitchingTdk = ref(false);
+            const showLandingSwitchDrawer = ref(false);
+            const landingSwitchTargetIds = ref([]);
+            const landingSwitchContextLabel = ref('');
+            const isSwitchingLanding = ref(false);
             const serverStatusCards = ref([]);
             const showServerStatusDrawer = ref(false);
             const activeServerStatus = ref(null);
@@ -1174,6 +1369,7 @@
             const homeLogTab = ref('task');
             const homeTaskStatusFilter = ref('all');
             const uploadTaskStatusFilter = ref('all');
+            const landingTaskStatusFilter = ref('all');
             const handledTaskStateKeys = new Set();
             const handledTaskFailureToasts = new Set();
             const showLogDetailDrawer = ref(false);
@@ -1242,7 +1438,7 @@
                         let needRefreshSites = false;
                         for (const item of (taskLogs.value || [])) {
                             const taskType = String(item.task_type || '');
-                            if (!['switch_tdk_batch', 'switch_https_batch', 'delete_site_batch'].includes(taskType)) continue;
+                            if (!['switch_tdk_batch', 'switch_https_batch', 'delete_site_batch', 'switch_landing_batch'].includes(taskType)) continue;
                             const status = String(item.status || '').toLowerCase();
                             if (!['success', 'failed'].includes(status)) continue;
                             const key = `${item.id}:${status}`;
@@ -1252,7 +1448,7 @@
                             }
                             if (status === 'failed') {
                                 const failToastKey = `failed-toast:${item.id}`;
-                                if (!handledTaskFailureToasts.has(failToastKey)) {
+                                if (!handledTaskFailureToasts.has(failToastKey) && isRecentTask(item, 30)) {
                                     handledTaskFailureToasts.add(failToastKey);
                                     try {
                                         const detail = typeof item.detail === 'string' ? JSON.parse(item.detail) : (item.detail || {});
@@ -1278,6 +1474,11 @@
                 if (uploadTaskStatusFilter.value === 'all') return uploadTaskLogs.value;
                 return uploadTaskLogs.value.filter(x => String(x.status || '').toLowerCase() === uploadTaskStatusFilter.value);
             });
+            const landingTaskLogs = computed(() => (taskLogs.value || []).filter(x => ['landing_upload', 'switch_landing_batch'].includes(String(x.task_type || ''))).slice(0, 100));
+            const filteredLandingTaskLogs = computed(() => {
+                if (landingTaskStatusFilter.value === 'all') return landingTaskLogs.value;
+                return landingTaskLogs.value.filter(x => String(x.status || '').toLowerCase() === landingTaskStatusFilter.value);
+            });
             const filteredHomeTaskLogs = computed(() => {
                 const all = (taskLogs.value || []).slice(0, 60);
                 if (homeTaskStatusFilter.value === 'all') return all;
@@ -1290,6 +1491,33 @@
                 if (s === 'running') return { emoji: '⏳', label: '执行中', class: 'text-warning' };
                 if (s === 'queued') return { emoji: '🕓', label: '排队中', class: 'text-warning' };
                 return { emoji: 'ℹ️', label: s || '未知', class: 'text-gray-300' };
+            };
+            const isRecentTask = (item, maxAgeSec = 20) => {
+                const ts = new Date(item?.updated_at || item?.created_at || 0).getTime();
+                if (!Number.isFinite(ts) || ts <= 0) return false;
+                return (Date.now() - ts) / 1000 <= maxAgeSec;
+            };
+            const formatPercent = (value) => {
+                const n = Number(value);
+                if (!Number.isFinite(n)) return '--';
+                return `${Math.max(0, Math.min(100, Math.round(n)))}%`;
+            };
+            const ringStyle = (value) => {
+                const n = Math.max(0, Math.min(100, Number(value) || 0));
+                const c = 2 * Math.PI * 16;
+                const filled = (c * n) / 100;
+                return { strokeDasharray: `${filled} ${c - filled}` };
+            };
+            const ringColor = (value, type = 'cpu') => {
+                const n = Math.max(0, Math.min(100, Number(value) || 0));
+                if (type === 'disk') {
+                    if (n >= 90) return '#fb7185';
+                    if (n >= 75) return '#fbbf24';
+                    return '#a78bfa';
+                }
+                if (n >= 85) return '#fb7185';
+                if (n >= 70) return '#fbbf24';
+                return type === 'memory' ? '#60a5fa' : '#22d3ee';
             };
             const openLogDetailDrawer = async (type, item) => {
                 activeLogDetailType.value = type;
@@ -1398,6 +1626,14 @@
                 tdkSwitchTargetIds.value = ids;
                 tdkSwitchContextLabel.value = `批量切换 ${ids.length} 个站点`;
                 showTdkSwitchDrawer.value = true;
+            };
+            const openBatchLandingDrawer = () => {
+                const ids = [...selectedSiteIds.value];
+                if (!ids.length) return;
+                if (!landingPages.value.length) return showToast('暂无可用落地页，请先上传', 'warning');
+                landingSwitchTargetIds.value = ids;
+                landingSwitchContextLabel.value = `批量配置 ${ids.length} 个站点落地页`;
+                showLandingSwitchDrawer.value = true;
             };
             const batchEnableHttps = async () => {
                 const ids = [...selectedSiteIds.value];
@@ -1515,11 +1751,24 @@
                 tdkSwitchContextLabel.value = `单站点切换：${site.domain}（当前：${site.tdk_name || '-'}）`;
                 showTdkSwitchDrawer.value = true;
             };
+            const openSingleLandingDrawer = (site) => {
+                if (!site?.id) return;
+                if (!landingPages.value.length) return showToast('暂无可用落地页，请先上传', 'warning');
+                landingSwitchTargetIds.value = [site.id];
+                landingSwitchContextLabel.value = `单站点配置落地页：${site.domain}`;
+                showLandingSwitchDrawer.value = true;
+            };
             const closeTdkSwitchDrawer = () => {
                 if (isSwitchingTdk.value) return;
                 showTdkSwitchDrawer.value = false;
                 tdkSwitchTargetIds.value = [];
                 tdkSwitchContextLabel.value = '';
+            };
+            const closeLandingSwitchDrawer = () => {
+                if (isSwitchingLanding.value) return;
+                showLandingSwitchDrawer.value = false;
+                landingSwitchTargetIds.value = [];
+                landingSwitchContextLabel.value = '';
             };
             const applyTdkToTargets = async (tdk) => {
                 const ids = [...tdkSwitchTargetIds.value];
@@ -1539,6 +1788,23 @@
                     showToast(e, 'error');
                 } finally {
                     isSwitchingTdk.value = false;
+                }
+            };
+            const applyLandingToTargets = async (landing) => {
+                const ids = [...landingSwitchTargetIds.value];
+                if (!ids.length || !landing?.id) return;
+                const ok = await askConfirm(`确认配置落地页：${landing.name} ？`, { title: '配置落地页', okText: '提交任务' });
+                if (!ok) return;
+                isSwitchingLanding.value = true;
+                try {
+                    const res = await ax.post('/sites/batch-switch-landing', { site_ids: ids, landing_page_id: landing.id });
+                    showToast(`落地页配置任务已入队：${res.queued || 0} 条`, 'success');
+                    await fetchTaskLogs();
+                    closeLandingSwitchDrawer();
+                } catch (e) {
+                    showToast(e, 'error');
+                } finally {
+                    isSwitchingLanding.value = false;
                 }
             };
             const cleanupStuckDeployingSites = async () => {
@@ -1670,6 +1936,8 @@
             const templates = ref([]);
             const showUploadModal = ref(false);
             const isUploading = ref(false);
+            const isTemplateDragOver = ref(false);
+            const templateUploadFile = ref(null);
             const uploadProgress = ref(0);
             const uploadedBytes = ref(0);
             const uploadTotalBytes = ref(0);
@@ -1681,6 +1949,20 @@
             const uploadLastPayload = ref(null);
             const fileInput = ref(null);
             const uploadForm = reactive({ name: '', pkg_type: 'theme' });
+            const onTemplateFileChange = () => {
+                const selected = fileInput.value?.files?.[0] || null;
+                templateUploadFile.value = selected;
+            };
+            const onTemplateFileDrop = (evt) => {
+                isTemplateDragOver.value = false;
+                const dropped = evt?.dataTransfer?.files?.[0] || null;
+                if (!dropped) return;
+                if (!String(dropped.name || '').toLowerCase().endsWith('.zip')) {
+                    showToast('仅支持拖拽 .zip 文件', 'warning');
+                    return;
+                }
+                templateUploadFile.value = dropped;
+            };
             const fetchTemplates = async () => {
                 try {
                     templates.value = await ax.get('/templates/');
@@ -1720,6 +2002,7 @@
             const closeUploadModal = () => {
                 if (isUploading.value) return;
                 showUploadModal.value = false;
+                templateUploadFile.value = null;
                 resetUploadState();
             };
             const cancelUpload = () => {
@@ -1759,7 +2042,7 @@
             };
             const submitUpload = async () => {
                 if (isUploading.value) return;
-                const selectedFile = fileInput.value?.files?.[0];
+                const selectedFile = templateUploadFile.value || fileInput.value?.files?.[0];
                 if(!selectedFile || !uploadForm.name) return showToast('请填写名称并选择文件', 'error');
                 const payload = { file: selectedFile, name: uploadForm.name, pkg_type: uploadForm.pkg_type };
                 uploadLastPayload.value = payload;
@@ -1786,6 +2069,7 @@
                     showToast('资源包上传任务已入队，请在任务日志查看进度', 'success');
                     showUploadModal.value = false;
                     fileInput.value.value = ''; 
+                    templateUploadFile.value = null;
                     uploadForm.name = '';
                     uploadLastFailed.value = false;
                     uploadLastPayload.value = null;
@@ -1849,6 +2133,98 @@
                 const ok = await askConfirm('确认删除该资源包？', { title: '删除资源包', okText: '删除' });
                 if (!ok) return;
                 try { await ax.delete(`/templates/${id}`); fetchTemplates(); deployForm.selectedCore = null; deployForm.selectedTheme = null;} catch(e){}
+            };
+
+            // ---- 落地页管理 ----
+            const landingPages = ref([]);
+            const showLandingUploadModal = ref(false);
+            const isLandingUploading = ref(false);
+            const isLandingDragOver = ref(false);
+            const landingFileInput = ref(null);
+            const landingUploadFile = ref(null);
+            const landingUploadForm = reactive({ id: null, name: '', remark: '' });
+            const fetchLandingPages = async () => {
+                try {
+                    landingPages.value = await ax.get('/landing-pages/');
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const openLandingUploadModal = (item = null) => {
+                landingUploadForm.id = item?.id || null;
+                landingUploadForm.name = item?.name || '';
+                landingUploadForm.remark = item?.remark || '';
+                showLandingUploadModal.value = true;
+                landingUploadFile.value = null;
+                isLandingDragOver.value = false;
+            };
+            const onLandingFileChange = () => {
+                const selected = landingFileInput.value?.files?.[0] || null;
+                landingUploadFile.value = selected;
+            };
+            const onLandingFileDrop = (evt) => {
+                isLandingDragOver.value = false;
+                const dropped = evt?.dataTransfer?.files?.[0] || null;
+                if (!dropped) return;
+                if (!String(dropped.name || '').toLowerCase().endsWith('.zip')) {
+                    showToast('仅支持拖拽 .zip 文件', 'warning');
+                    return;
+                }
+                landingUploadFile.value = dropped;
+            };
+            const submitLandingUpload = async () => {
+                if (isLandingUploading.value) return;
+                const selectedFile = landingUploadFile.value || landingFileInput.value?.files?.[0];
+                if (!selectedFile) return showToast('请选择落地页 zip 文件', 'error');
+                if (!landingUploadForm.name) return showToast('请填写落地页名称', 'error');
+                const form = new FormData();
+                form.append('file', selectedFile);
+                form.append('name', landingUploadForm.name);
+                form.append('remark', landingUploadForm.remark || '');
+                if (landingUploadForm.id) form.append('landing_page_id', String(landingUploadForm.id));
+                isLandingUploading.value = true;
+                try {
+                    const res = await ax.post('/landing-pages/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+                    showToast(`落地页上传任务已入队：${res.queued || 1} 条`, 'success');
+                    showLandingUploadModal.value = false;
+                    if (landingFileInput.value) landingFileInput.value.value = '';
+                    landingUploadFile.value = null;
+                    await fetchTaskLogs();
+                } catch (e) {
+                    showToast(e, 'error');
+                } finally {
+                    isLandingUploading.value = false;
+                }
+            };
+            const previewLanding = (item) => {
+                if (!item?.id) return;
+                window.open(`/landing_pages/${item.id}/index.html`, '_blank', 'noopener,noreferrer');
+            };
+            const renameLanding = async (item) => {
+                if (!item?.id) return;
+                const inputName = await askInput(`修改名称（当前：${item.name}）`, { title: '修改落地页名称', defaultValue: item.name || '' });
+                if (inputName === null) return;
+                const inputRemark = await askInput('修改备注（可为空）', { title: '修改落地页备注', defaultValue: item.remark || '' });
+                if (inputRemark === null) return;
+                try {
+                    await ax.put(`/landing-pages/${item.id}?name=${encodeURIComponent(inputName)}&remark=${encodeURIComponent(inputRemark)}`);
+                    showToast('落地页信息已更新', 'success');
+                    await fetchLandingPages();
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const deleteLanding = async (item) => {
+                if (!item?.id) return;
+                const ok = await askConfirm(`确认删除落地页：${item.name}？`, { title: '删除落地页', okText: '删除' });
+                if (!ok) return;
+                try {
+                    await ax.delete(`/landing-pages/${item.id}`);
+                    showToast('落地页已删除', 'success');
+                    await fetchLandingPages();
+                } catch (e) {
+                    showToast(e, 'error');
+                }
             };
 
             // ---- 批量建站控制台 ----
@@ -2111,7 +2487,7 @@
             let panelRefreshTimer = null;
             let siteLogModalRefreshTimer = null;
             onMounted(() => {
-                checkHealth(); fetchServers(); fetchTdks(); fetchTemplates(); fetchSites(); fetchServerStatusSummary(); fetchOperationLogs(); fetchTaskLogs();
+                checkHealth(); fetchServers(); fetchTdks(); fetchTemplates(); fetchLandingPages(); fetchSites(); fetchServerStatusSummary(); fetchOperationLogs(); fetchTaskLogs();
                 siteAutoRefreshTimer = setInterval(() => {
                     if (currentTab.value !== 'sites') return;
                     const hasRunning = sites.value.some(s => s.status === 'deploying');
@@ -2127,6 +2503,9 @@
                     } else if (currentTab.value === 'templates') {
                         fetchTaskLogs();
                         fetchTemplates();
+                    } else if (currentTab.value === 'landing_pages') {
+                        fetchTaskLogs();
+                        fetchLandingPages();
                     }
                 }, 3000);
                 siteLogModalRefreshTimer = setInterval(() => {
@@ -2143,10 +2522,14 @@
                 if (tab === 'sites') {
                     fetchSites();
                     fetchServerStatusSummary();
+                    fetchLandingPages();
                     fetchOperationLogs();
                     fetchTaskLogs();
                 } else if (tab === 'templates') {
                     fetchTemplates();
+                    fetchTaskLogs();
+                } else if (tab === 'landing_pages') {
+                    fetchLandingPages();
                     fetchTaskLogs();
                 } else if (tab === 'tdks') {
                     fetchOperationLogs();
@@ -2161,12 +2544,13 @@
             });
 
             return {
-                currentTab, apiStatus, apiBaseUrl, apiSourceLabel, toasts, showToast, toastClass, toastIcon, uiDialog, resolveUiDialog,
-                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, openBatchTdkDrawer, openSingleTdkDrawer, showTdkSwitchDrawer, tdkSwitchContextLabel, closeTdkSwitchDrawer, applyTdkToTargets, batchEnableHttps, enableSiteHttps, handleSiteHttpsStatus, httpsStatusMeta, sitePublicUrl, siteAdminUrl, openSitePublic, openSiteAdmin, cleanupStuckDeployingSites, copySiteAdminUsername, copySiteAdminPassword, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, closeSiteLogsModal, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs, isSiteLogStreaming, serverStatusCards, fetchServerStatusSummary, showServerStatusDrawer, activeServerStatus, openServerStatusDrawer, refreshOneServerStatus,
-                operationLogs, taskLogs, homeLogTab, homeTaskStatusFilter, uploadTaskStatusFilter, fetchOperationLogs, fetchTaskLogs, uploadTaskLogs, filteredUploadTaskLogs, filteredHomeTaskLogs, taskStatusMeta, showLogDetailDrawer, activeLogDetail, activeLogDetailType, openLogDetailDrawer, prettyLogDetail, failedDeleteItems, copyFailedDeleteList, retryFailedDeleteItems,
+                currentTab, apiStatus, apiBaseUrl, apiSourceLabel, toasts, showToast, copyToastText, toastClass, toastClassWithPointer, toastIcon, uiDialog, resolveUiDialog,
+                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, openBatchTdkDrawer, openSingleTdkDrawer, showTdkSwitchDrawer, tdkSwitchContextLabel, closeTdkSwitchDrawer, applyTdkToTargets, openBatchLandingDrawer, openSingleLandingDrawer, showLandingSwitchDrawer, landingSwitchContextLabel, closeLandingSwitchDrawer, applyLandingToTargets, batchEnableHttps, enableSiteHttps, handleSiteHttpsStatus, httpsStatusMeta, sitePublicUrl, siteAdminUrl, openSitePublic, openSiteAdmin, cleanupStuckDeployingSites, copySiteAdminUsername, copySiteAdminPassword, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, closeSiteLogsModal, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs, isSiteLogStreaming, serverStatusCards, fetchServerStatusSummary, showServerStatusDrawer, activeServerStatus, openServerStatusDrawer, refreshOneServerStatus, formatPercent, ringStyle, ringColor,
+                operationLogs, taskLogs, homeLogTab, homeTaskStatusFilter, uploadTaskStatusFilter, landingTaskStatusFilter, fetchOperationLogs, fetchTaskLogs, uploadTaskLogs, filteredUploadTaskLogs, landingTaskLogs, filteredLandingTaskLogs, filteredHomeTaskLogs, taskStatusMeta, showLogDetailDrawer, activeLogDetail, activeLogDetailType, openLogDetailDrawer, prettyLogDetail, failedDeleteItems, copyFailedDeleteList, retryFailedDeleteItems,
                 servers, showAddServerModal, addForm, submitAddServer, testServer, updateServerSshPort, deleteServer, testingId,
                 tdks, showAddTdkModal, bulkTdkInput, parsedTdksCount, parseTdkLines, submitBulkTdk, deleteTdk, isSubmittingTdk,
-                templates, showUploadModal, uploadForm, isUploading, submitUpload, fileInput, deleteTemplate, refreshTemplatePage, uploadProgress, uploadedSizeText, totalSizeText, uploadSpeedText, closeUploadModal, cancelUpload, retryLastUpload, uploadRetryLimit, currentUploadAttempt, uploadLastFailed, hasRetryUploadPayload,
+                templates, showUploadModal, uploadForm, isUploading, submitUpload, fileInput, deleteTemplate, refreshTemplatePage, uploadProgress, uploadedSizeText, totalSizeText, uploadSpeedText, closeUploadModal, cancelUpload, retryLastUpload, uploadRetryLimit, currentUploadAttempt, uploadLastFailed, hasRetryUploadPayload, isTemplateDragOver, templateUploadFile, onTemplateFileChange, onTemplateFileDrop,
+                landingPages, fetchLandingPages, showLandingUploadModal, landingUploadForm, landingFileInput, isLandingUploading, isLandingDragOver, landingUploadFile, openLandingUploadModal, submitLandingUpload, onLandingFileChange, onLandingFileDrop, previewLanding, renameLanding, deleteLanding,
                 deployForm, activeDrawer, openDrawer, selectResource, filteredTemplates, lineCount, updateLineCount, isDeploying, submitDeploy, isFormValid, availableIpCount, copyAvailableIps, hostHeaderOptions, toggleHostHeader, parseAvailableIpPool, parsedIpSummary, parsedIpPreview, domainSeedText, generateDomainIpTemplate, regenAdminCredentials, onDeployServerChange
             };
         }

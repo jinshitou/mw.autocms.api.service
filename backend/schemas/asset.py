@@ -20,3 +20,16 @@ class TemplateResponse(BaseModel):
     obs_path: str
     created_at: datetime
     class Config: from_attributes = True
+
+
+class LandingPageResponse(BaseModel):
+    id: int
+    name: str
+    obs_path: str
+    remark: str | None = None
+    username: str | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
+
+    class Config:
+        from_attributes = True

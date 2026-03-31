@@ -2,8 +2,9 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
-from api.routers import deploy, server, tdk, template, site, audit
+from api.routers import deploy, server, tdk, template, site, audit, landing
 from core.database import engine, Base
 import models.server
 import models.asset
@@ -35,6 +36,10 @@ def ensure_schema_compatibility():
             statements.append("ALTER TABLE sites ADD COLUMN admin_username VARCHAR")
         if "admin_password" not in site_cols:
             statements.append("ALTER TABLE sites ADD COLUMN admin_password VARCHAR")
+        if "landing_page_id" not in site_cols:
+            statements.append("ALTER TABLE sites ADD COLUMN landing_page_id INTEGER")
+        if "landing_page_name" not in site_cols:
+            statements.append("ALTER TABLE sites ADD COLUMN landing_page_name VARCHAR")
         if "https_enabled" not in site_cols:
             statements.append("ALTER TABLE sites ADD COLUMN https_enabled BOOLEAN DEFAULT FALSE")
         if "https_auto_renew" not in site_cols:
@@ -70,8 +75,11 @@ app.include_router(deploy.router, prefix="/api/deploy", tags=["Deploy"])
 app.include_router(server.router, prefix="/api/servers", tags=["Servers"])
 app.include_router(tdk.router, prefix="/api/tdks", tags=["TDK Management"])
 app.include_router(template.router, prefix="/api/templates", tags=["Template Management"])
+app.include_router(landing.router, prefix="/api/landing-pages", tags=["Landing Page Management"])
 app.include_router(site.router, prefix="/api/sites", tags=["Site Management"])
 app.include_router(audit.router, prefix="/api/logs", tags=["Audit Logs"])
+Path("/app/landing_pages").mkdir(parents=True, exist_ok=True)
+app.mount("/landing_pages", StaticFiles(directory="/app/landing_pages"), name="landing_pages")
 
 @app.get("/")
 def frontend_or_health():
