@@ -7,7 +7,10 @@ class SiteBase(BaseModel):
     bind_ip: str
     server_id: int
     template_key: str
+    tdk_name: Optional[str] = None
     tdk_title: str
+    tdk_keywords: Optional[str] = None
+    tdk_description: Optional[str] = None
     admin_path: str
     admin_username: Optional[str] = None
     admin_password: Optional[str] = None
@@ -33,6 +36,11 @@ class SitePageResponse(BaseModel):
 
 class SiteBatchDeleteRequest(BaseModel):
     site_ids: List[int] = Field(default_factory=list)
+
+
+class SiteBatchSwitchTdkRequest(BaseModel):
+    site_ids: List[int] = Field(default_factory=list)
+    tdk_id: int
 
 
 class SiteDeployLogResponse(BaseModel):

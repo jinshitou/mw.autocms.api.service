@@ -23,6 +23,24 @@
         .drawer-enter-from, .drawer-leave-to { transform: translateX(100%); }
         .drawer-overlay-enter-active, .drawer-overlay-leave-active { transition: opacity 0.3s ease; }
         .drawer-overlay-enter-from, .drawer-overlay-leave-to { opacity: 0; }
+        .tdk-tooltip-wrap { position: relative; display: inline-block; }
+        .tdk-tooltip-content {
+            position: absolute;
+            left: 0;
+            top: calc(100% + 6px);
+            z-index: 30;
+            min-width: 220px;
+            max-width: 460px;
+            white-space: normal;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.2s ease 0.5s;
+            pointer-events: none;
+        }
+        .tdk-tooltip-wrap:hover .tdk-tooltip-content {
+            opacity: 1;
+            visibility: visible;
+        }
     </style>
 </head>
 <body class="bg-darkbg text-gray-200 h-screen overflow-hidden flex">
@@ -43,6 +61,15 @@
             <div class="h-16 flex items-center px-6 border-b border-panelborder">
                 <i class="fa-solid fa-layer-group text-brand text-2xl"></i>
                 <span class="ml-3 font-bold text-lg text-white tracking-widest">批量易优</span>
+            </div>
+            <div class="px-3 pt-2">
+                <div class="mx-3 p-2 rounded border border-panelborder bg-darkbg/70">
+                    <div class="text-[10px] text-gray-500 uppercase">API</div>
+                    <div class="text-[10px] text-gray-300 break-all mt-1">{{ apiBaseUrl }}</div>
+                    <div :class="['text-[10px] mt-1', apiStatus === 'online' ? 'text-success' : (apiStatus === 'offline' ? 'text-danger' : 'text-warning')]">
+                        {{ apiStatus === 'online' ? '已连接' : (apiStatus === 'offline' ? '未连接' : '检测中') }} · {{ apiSourceLabel }}
+                    </div>
+                </div>
             </div>
             <div class="p-3 space-y-2">
                 <div class="text-xs font-bold text-gray-500 mb-2 uppercase px-3 mt-4">核心管理</div>
@@ -72,7 +99,7 @@
     <main class="flex-1 flex flex-col h-full overflow-hidden bg-darkbg relative">
         <div class="flex-1 overflow-auto p-6">
             
-            <div v-show="currentTab === 'sites'" class="h-full flex flex-col max-w-6xl mx-auto">
+            <div v-show="currentTab === 'sites'" class="h-full flex flex-col w-full max-w-[1600px] mx-auto">
                 <div class="flex justify-between items-center mb-6">
                     <h2 class="text-xl font-bold text-white">🌐 站点管理</h2>
                     <div class="flex gap-2">
@@ -84,10 +111,56 @@
                         <button @click="currentTab = 'bulk_deploy'" class="bg-brand hover:bg-brandhover text-white px-4 py-2 rounded text-sm font-bold shadow transition-colors"><i class="fa-solid fa-rocket mr-1"></i> 一键批量上站</button>
                     </div>
                 </div>
+
+                <div class="grid grid-cols-12 gap-4 flex-1 min-h-0">
+                <div class="col-span-9 min-h-0 flex flex-col">
+                <div class="mb-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-sm font-bold text-gray-300">节点状态概览</h3>
+                        <button @click="fetchServerStatusSummary" class="text-xs px-3 py-1.5 rounded border border-panelborder hover:border-brand text-gray-300">
+                            <i class="fa-solid fa-rotate-right mr-1"></i>刷新节点状态
+                        </button>
+                    </div>
+                    <div class="overflow-x-auto pb-2">
+                        <div class="flex gap-3 min-w-max">
+                            <button
+                                v-for="stat in serverStatusCards"
+                                :key="stat.server_id"
+                                @click="openServerStatusDrawer(stat)"
+                                class="w-[300px] text-left rounded-lg p-3 transition border border-cyan-500/30 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 hover:border-cyan-300 hover:shadow-[0_0_18px_rgba(34,211,238,0.35)]"
+                            >
+                                <div class="flex items-center justify-between">
+                                    <div class="font-bold text-cyan-200 truncate tracking-wide">{{ stat.name }}</div>
+                                    <div class="text-[11px] text-cyan-400/80">{{ stat.main_ip }}</div>
+                                </div>
+                                <div class="mt-2 space-y-1 text-[11px] text-gray-300">
+                                    <div class="flex items-center justify-between"><span>CPU</span><span class="text-cyan-200">{{ stat.cpu_percent ?? '--' }}%</span></div>
+                                    <div class="h-1 rounded bg-slate-700 overflow-hidden"><div class="h-full bg-cyan-400" :style="{width: Math.max(0, Math.min(100, Number(stat.cpu_percent || 0))) + '%'}"></div></div>
+                                    <div class="flex items-center justify-between"><span>内存</span><span class="text-cyan-200">{{ stat.memory_percent ?? '--' }}%</span></div>
+                                    <div class="h-1 rounded bg-slate-700 overflow-hidden"><div class="h-full bg-blue-400" :style="{width: Math.max(0, Math.min(100, Number(stat.memory_percent || 0))) + '%'}"></div></div>
+                                    <div class="flex items-center justify-between"><span>硬盘</span><span class="text-cyan-200">{{ stat.disk_percent ?? '--' }}%</span></div>
+                                    <div class="h-1 rounded bg-slate-700 overflow-hidden"><div class="h-full bg-violet-400" :style="{width: Math.max(0, Math.min(100, Number(stat.disk_percent || 0))) + '%'}"></div></div>
+                                </div>
+                                <div class="mt-2 flex items-center justify-between text-[11px]">
+                                    <span class="text-cyan-300/90">站点 {{ stat.site_count }}</span>
+                                    <span class="text-cyan-300/90">可用IP {{ stat.available_ip_count }}</span>
+                                </div>
+                                <div class="mt-2 flex items-center gap-2 text-[11px]">
+                                    <span :class="stat.bt_ok ? 'text-emerald-400' : 'text-rose-400'">BT {{ stat.bt_ok ? 'OK' : '异常' }}</span>
+                                    <span :class="stat.ssh_ok ? 'text-emerald-400' : 'text-rose-400'">SSH {{ stat.ssh_ok ? 'OK' : '异常' }}</span>
+                                </div>
+                            </button>
+                            <div v-if="serverStatusCards.length === 0" class="text-xs text-gray-500 py-5 px-2">暂无服务器状态数据</div>
+                        </div>
+                    </div>
+                </div>
                 
                 <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg overflow-hidden flex-1 flex flex-col">
                     <div class="p-3 border-b border-panelborder bg-darkbg/50 flex gap-2">
                         <span class="text-xs text-gray-500 self-center">共 {{ siteTotal }} 条，当前第 {{ sitePage }} / {{ siteTotalPages || 1 }} 页</span>
+                        <button v-if="selectedSiteIds.length > 0" @click="openBatchTdkDrawer" class="bg-brand/20 text-brand border border-brand/50 hover:bg-brand/40 px-3 py-1.5 rounded text-xs transition-colors">
+                            批量切换TDK ({{ selectedSiteIds.length }})
+                        </button>
                         <button @click="cleanupStuckDeployingSites" class="bg-warning/20 text-warning border border-warning/50 hover:bg-warning/40 px-3 py-1.5 rounded text-xs transition-colors">
                             清理超时部署
                         </button>
@@ -103,7 +176,7 @@
                                     <th class="p-3 w-10"><input type="checkbox" :checked="isAllSitesSelected" @change="toggleSelectAllSites($event)" class="rounded bg-darkbg"></th>
                                     <th class="p-3">域名</th>
                                     <th class="p-3">绑定 IP</th>
-                                    <th class="p-3">标题(T)摘要</th>
+                                    <th class="p-3">TDK</th>
                                     <th class="p-3">后台凭据</th>
                                     <th class="p-3">部署状态</th>
                                     <th class="p-3">创建时间</th>
@@ -118,11 +191,20 @@
                                     <td class="p-3"><input type="checkbox" :checked="selectedSiteIds.includes(site.id)" @change="toggleSelectSite(site.id, $event)" class="rounded bg-darkbg"></td>
                                     <td class="p-3 font-medium text-brand hover:underline cursor-pointer"><a :href="'http://' + site.domain" target="_blank">{{ site.domain }}</a></td>
                                     <td class="p-3 text-gray-400 font-mono text-xs">{{ site.bind_ip }}</td>
-                                    <td class="p-3 text-gray-400 truncate max-w-[150px]" :title="site.tdk_title">{{ site.tdk_title || '-' }}</td>
+                                    <td class="p-3 text-gray-300 max-w-[180px]">
+                                        <div class="tdk-tooltip-wrap">
+                                            <span class="truncate inline-block max-w-[170px]">{{ site.tdk_name || '-' }}</span>
+                                            <div class="tdk-tooltip-content bg-gray-900 border border-panelborder rounded p-3 text-[13px] leading-relaxed text-gray-100 shadow-xl">
+                                                <div><span class="text-gray-400">Title:</span> {{ site.tdk_title || '-' }}</div>
+                                                <div class="mt-1"><span class="text-gray-400">Keywords:</span> {{ site.tdk_keywords || '-' }}</div>
+                                                <div class="mt-1"><span class="text-gray-400">Description:</span> {{ site.tdk_description || '-' }}</div>
+                                            </div>
+                                        </div>
+                                    </td>
                                     <td class="p-3 text-gray-400 text-xs">
-                                        <div v-if="site.admin_username && site.admin_password" class="flex items-center gap-2">
-                                            <span class="font-mono">{{ site.admin_username }}/{{ site.admin_password }}</span>
-                                            <button @click="copySiteAdminCreds(site)" class="text-brand hover:text-white" title="复制后台账号密码"><i class="fa-solid fa-copy"></i></button>
+                                        <div v-if="site.admin_username || site.admin_password" class="flex items-center gap-2">
+                                            <button @click="copySiteAdminUsername(site)" :disabled="!site.admin_username" class="text-[11px] px-2 py-1 rounded border border-panelborder text-brand hover:text-white disabled:opacity-40 disabled:cursor-not-allowed">复制账号</button>
+                                            <button @click="copySiteAdminPassword(site)" :disabled="!site.admin_password" class="text-[11px] px-2 py-1 rounded border border-panelborder text-brand hover:text-white disabled:opacity-40 disabled:cursor-not-allowed">复制密码</button>
                                         </div>
                                         <span v-else>-</span>
                                     </td>
@@ -134,7 +216,8 @@
                                     <td class="p-3 text-gray-400 text-xs">{{ new Date(site.created_at).toLocaleString() }}</td>
                                     <td class="p-3 text-right pr-4 space-x-3">
                                         <button @click="openSiteLogs(site)" class="text-gray-300 hover:text-white" title="查看日志"><i class="fa-solid fa-file-lines"></i></button>
-                                        <button @click="deleteSite(site.id)" class="text-danger hover:text-red-400" title="删除记录"><i class="fa-solid fa-trash"></i></button>
+                                        <button @click="openSingleTdkDrawer(site)" class="text-brand hover:text-white" title="修改TDK"><i class="fa-solid fa-pen-to-square"></i></button>
+                                        <button @click="deleteSite(site)" class="text-danger hover:text-red-400" title="删除记录"><i class="fa-solid fa-trash"></i></button>
                                         <a :href="'http://' + site.domain + '/' + site.admin_path" target="_blank" class="text-gray-400 hover:text-white" title="进入后台"><i class="fa-solid fa-arrow-right-to-bracket"></i></a>
                                     </td>
                                 </tr>
@@ -146,6 +229,48 @@
                         <span class="text-xs text-gray-400 w-28 text-center">{{ sitePage }} / {{ siteTotalPages || 1 }}</span>
                         <button @click="changeSitePage(sitePage + 1)" :disabled="sitePage >= siteTotalPages" class="px-3 py-1.5 text-xs rounded border border-panelborder hover:border-brand disabled:opacity-40 disabled:cursor-not-allowed">下一页</button>
                     </div>
+                </div>
+                </div>
+                <div class="col-span-3 min-h-0">
+                    <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg h-full flex flex-col overflow-hidden">
+                        <div class="px-3 py-3 border-b border-panelborder flex items-center justify-between">
+                            <h3 class="text-sm font-bold text-gray-200">日志看板</h3>
+                            <button @click="homeLogTab = homeLogTab === 'task' ? 'operation' : 'task'" class="text-xs px-2 py-1 rounded border border-panelborder hover:border-brand text-gray-300">
+                                切换到{{ homeLogTab === 'task' ? '操作' : '任务' }}
+                            </button>
+                        </div>
+                        <div class="px-3 pt-2 pb-1 border-b border-panelborder flex gap-2">
+                            <button @click="homeLogTab = 'task'" :class="['text-xs px-2 py-1 rounded border', homeLogTab === 'task' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">任务日志</button>
+                            <button @click="homeLogTab = 'operation'" :class="['text-xs px-2 py-1 rounded border', homeLogTab === 'operation' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">操作日志</button>
+                        </div>
+                        <div v-if="homeLogTab === 'task'" class="px-3 py-2 border-b border-panelborder flex flex-wrap gap-2">
+                            <button @click="homeTaskStatusFilter = 'all'" :class="['text-xs px-2 py-1 rounded border', homeTaskStatusFilter === 'all' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">全部</button>
+                            <button @click="homeTaskStatusFilter = 'queued'" :class="['text-xs px-2 py-1 rounded border', homeTaskStatusFilter === 'queued' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">排队中</button>
+                            <button @click="homeTaskStatusFilter = 'running'" :class="['text-xs px-2 py-1 rounded border', homeTaskStatusFilter === 'running' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">执行中</button>
+                            <button @click="homeTaskStatusFilter = 'success'" :class="['text-xs px-2 py-1 rounded border', homeTaskStatusFilter === 'success' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">成功</button>
+                            <button @click="homeTaskStatusFilter = 'failed'" :class="['text-xs px-2 py-1 rounded border', homeTaskStatusFilter === 'failed' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">失败</button>
+                        </div>
+                        <div class="flex-1 overflow-y-auto p-2 space-y-2">
+                            <template v-if="homeLogTab === 'task'">
+                                <div v-if="filteredHomeTaskLogs.length === 0" class="text-xs text-gray-500 py-8 text-center">当前筛选下暂无任务日志</div>
+                                <div v-for="item in filteredHomeTaskLogs" :key="'home-task-'+item.id" class="bg-darkbg/60 border border-panelborder rounded p-2">
+                                    <div class="text-xs text-gray-200 truncate">{{ item.task_name }}</div>
+                                    <div class="text-xs mt-1" :class="taskStatusMeta(item.status).class">
+                                        {{ taskStatusMeta(item.status).emoji }} {{ taskStatusMeta(item.status).label }} · {{ item.message || '-' }}
+                                    </div>
+                                    <div class="text-xs text-gray-500 mt-1">{{ new Date(item.created_at).toLocaleString() }}</div>
+                                </div>
+                            </template>
+                            <template v-else>
+                                <div v-if="operationLogs.length === 0" class="text-sm text-gray-500 py-8 text-center">暂无操作日志</div>
+                                <div v-for="item in operationLogs.slice(0, 60)" :key="'home-op-'+item.id" class="bg-darkbg/60 border border-panelborder rounded p-2">
+                                    <div class="text-xs text-gray-200">{{ item.message }}</div>
+                                    <div class="text-xs text-gray-500 mt-1">{{ new Date(item.created_at).toLocaleString() }}</div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
                 </div>
             </div>
 
@@ -194,32 +319,61 @@
                 </div>
             </div>
 
-            <div v-show="currentTab === 'templates'" class="h-full flex flex-col max-w-6xl mx-auto">
+            <div v-show="currentTab === 'templates'" class="h-full flex flex-col w-full max-w-[1600px] mx-auto">
                 <div class="flex justify-between items-center mb-6">
                     <h2 class="text-xl font-bold text-white">📦 CMS 核心与模板库 (OBS)</h2>
-                    <button @click="showUploadModal = true" class="bg-brand hover:bg-brand/80 text-white px-4 py-2 rounded text-sm font-bold shadow"><i class="fa-solid fa-cloud-arrow-up mr-1"></i> 上传程序包</button>
+                    <div class="flex gap-2">
+                        <button @click="refreshTemplatePage" class="bg-panelborder hover:bg-gray-600 text-white px-4 py-2 rounded text-sm shadow"><i class="fa-solid fa-rotate-right mr-1"></i> 刷新列表</button>
+                        <button @click="showUploadModal = true" class="bg-brand hover:bg-brand/80 text-white px-4 py-2 rounded text-sm font-bold shadow"><i class="fa-solid fa-cloud-arrow-up mr-1"></i> 上传程序包</button>
+                    </div>
                 </div>
-                <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg overflow-hidden">
-                    <table class="w-full text-left text-sm text-gray-300">
-                        <thead class="bg-gray-800/50 text-xs text-gray-400 border-b border-panelborder">
-                            <tr><th class="px-6 py-4">资源名称</th><th class="px-6 py-4">类型</th><th class="px-6 py-4">OBS 真实路径</th><th class="px-6 py-4 text-right">操作</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="tpl in templates" :key="tpl.id" class="border-b border-panelborder hover:bg-gray-700/20">
-                                <td class="px-6 py-4 font-bold text-white">{{ tpl.name }}</td>
-                                <td class="px-6 py-4">
-                                    <span v-if="tpl.pkg_type === 'core'" class="bg-purple-900/50 text-purple-400 px-2 py-1 rounded text-xs font-bold">核心包</span>
-                                    <span v-else class="bg-blue-900/50 text-brand px-2 py-1 rounded text-xs font-bold">前端模板</span>
-                                </td>
-                                <td class="px-6 py-4 text-gray-500 text-xs font-mono">{{ tpl.obs_path }}</td>
-                                <td class="px-6 py-4 text-right"><button @click="deleteTemplate(tpl.id)" class="text-xs text-danger hover:underline">删除</button></td>
-                            </tr>
-                        </tbody>
-                    </table>
+                <div class="grid grid-cols-12 gap-4 flex-1 min-h-0">
+                    <div class="col-span-8 min-h-0">
+                        <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg overflow-hidden h-full">
+                            <table class="w-full text-left text-sm text-gray-300">
+                                <thead class="bg-gray-800/50 text-xs text-gray-400 border-b border-panelborder">
+                                    <tr><th class="px-6 py-4">资源名称</th><th class="px-6 py-4">类型</th><th class="px-6 py-4">OBS 真实路径</th><th class="px-6 py-4 text-right">操作</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="tpl in templates" :key="tpl.id" class="border-b border-panelborder hover:bg-gray-700/20">
+                                        <td class="px-6 py-4 font-bold text-white">{{ tpl.name }}</td>
+                                        <td class="px-6 py-4">
+                                            <span v-if="tpl.pkg_type === 'core'" class="bg-purple-900/50 text-purple-400 px-2 py-1 rounded text-xs font-bold">核心包</span>
+                                            <span v-else class="bg-blue-900/50 text-brand px-2 py-1 rounded text-xs font-bold">前端模板</span>
+                                        </td>
+                                        <td class="px-6 py-4 text-gray-500 text-xs font-mono">{{ tpl.obs_path }}</td>
+                                        <td class="px-6 py-4 text-right"><button @click="deleteTemplate(tpl.id)" class="text-xs text-danger hover:underline">删除</button></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="col-span-4 min-h-0">
+                        <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg h-full flex flex-col overflow-hidden">
+                            <div class="px-4 py-3 border-b border-panelborder text-sm font-bold text-gray-200">上传任务日志（自动刷新）</div>
+                            <div class="px-3 py-2 border-b border-panelborder flex flex-wrap gap-2">
+                                <button @click="uploadTaskStatusFilter = 'all'" :class="['text-xs px-2 py-1 rounded border', uploadTaskStatusFilter === 'all' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">全部</button>
+                                <button @click="uploadTaskStatusFilter = 'queued'" :class="['text-xs px-2 py-1 rounded border', uploadTaskStatusFilter === 'queued' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">排队中</button>
+                                <button @click="uploadTaskStatusFilter = 'running'" :class="['text-xs px-2 py-1 rounded border', uploadTaskStatusFilter === 'running' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">执行中</button>
+                                <button @click="uploadTaskStatusFilter = 'success'" :class="['text-xs px-2 py-1 rounded border', uploadTaskStatusFilter === 'success' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">成功</button>
+                                <button @click="uploadTaskStatusFilter = 'failed'" :class="['text-xs px-2 py-1 rounded border', uploadTaskStatusFilter === 'failed' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">失败</button>
+                            </div>
+                            <div class="flex-1 overflow-y-auto p-3 space-y-2">
+                                <div v-if="filteredUploadTaskLogs.length === 0" class="text-xs text-gray-500 py-6 text-center">当前筛选下暂无上传任务</div>
+                                <div v-for="item in filteredUploadTaskLogs" :key="'upload-task-'+item.id" class="bg-darkbg/60 border border-panelborder rounded p-3">
+                                    <div class="text-sm text-gray-200">{{ item.task_name }}</div>
+                                    <div class="text-sm mt-1" :class="taskStatusMeta(item.status).class">
+                                        {{ taskStatusMeta(item.status).emoji }} {{ taskStatusMeta(item.status).label }} · {{ item.message || '-' }}
+                                    </div>
+                                    <div class="text-xs text-gray-500 mt-1">{{ new Date(item.created_at).toLocaleString() }}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <div v-show="currentTab === 'bulk_deploy'" class="max-w-6xl mx-auto h-full overflow-y-auto pb-10">
+            <div v-show="currentTab === 'bulk_deploy'" class="w-full max-w-[1600px] mx-auto h-full overflow-y-auto pb-10">
                 <div class="flex items-center gap-3 mb-6">
                     <h2 class="text-xl font-bold text-white">🚀 生产控制台：批量下发站群</h2>
                 </div>
@@ -534,13 +688,162 @@
         </div>
     </div>
 
+    <transition name="drawer-overlay">
+        <div v-if="showTdkSwitchDrawer" @click="closeTdkSwitchDrawer" class="absolute inset-0 z-[55] bg-black/50 backdrop-blur-sm"></div>
+    </transition>
+    <transition name="drawer">
+        <div v-if="showTdkSwitchDrawer" class="absolute right-0 top-0 bottom-0 w-96 bg-panelbg border-l border-panelborder z-[60] shadow-2xl flex flex-col">
+            <div class="px-6 py-4 border-b border-panelborder flex justify-between items-center bg-gray-800/80">
+                <h3 class="text-lg font-bold text-white">
+                    选择 TDK 方案
+                </h3>
+                <button @click="closeTdkSwitchDrawer" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+            <div class="px-6 py-3 text-xs text-gray-400 border-b border-panelborder">
+                {{ tdkSwitchContextLabel }}
+            </div>
+            <div class="flex-1 overflow-y-auto p-4 space-y-3">
+                <div v-if="tdks.length === 0" class="text-center text-gray-500 mt-10">无 TDK 方案，请先去添加。</div>
+                <div v-for="tdk in tdks" :key="tdk.id" @click="applyTdkToTargets(tdk)" class="bg-darkbg border border-panelborder p-4 rounded-lg cursor-pointer hover:border-brand transition group">
+                    <div class="font-bold text-white group-hover:text-brand">{{ tdk.name }}</div>
+                    <div class="text-xs text-gray-500 mt-1 truncate">{{ tdk.title }}</div>
+                </div>
+            </div>
+        </div>
+    </transition>
+
+    <div v-if="showServerStatusDrawer" class="fixed inset-0 z-50 flex">
+        <div class="flex-1 bg-black/70 backdrop-blur-[1px]" @click="showServerStatusDrawer = false"></div>
+        <div class="w-[460px] border-l border-cyan-500/40 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 p-5 overflow-y-auto shadow-2xl shadow-cyan-500/20">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-cyan-200 font-bold tracking-wider">节点监控详情</h3>
+                <button @click="showServerStatusDrawer = false" class="text-cyan-400/80 hover:text-cyan-200"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div v-if="activeServerStatus" class="space-y-4 text-sm">
+                <div class="rounded-lg border border-cyan-500/30 bg-slate-900/80 p-3">
+                    <div class="text-cyan-100 font-bold text-base">{{ activeServerStatus.name }}</div>
+                    <div class="text-cyan-400/80 text-xs mt-1">{{ activeServerStatus.main_ip }}</div>
+                </div>
+
+                <div class="rounded-lg border border-cyan-500/30 bg-slate-900/80 p-3 space-y-3">
+                    <div class="flex items-center justify-between text-xs text-cyan-300/80">
+                        <span>CPU 负载</span>
+                        <span class="font-semibold text-cyan-100">{{ activeServerStatus.cpu_percent ?? '--' }}%</span>
+                    </div>
+                    <div class="h-2 rounded bg-slate-800 overflow-hidden">
+                        <div
+                            :class="[
+                                Number(activeServerStatus.cpu_percent || 0) >= 85 ? 'bg-rose-400 animate-pulse' : (Number(activeServerStatus.cpu_percent || 0) >= 70 ? 'bg-amber-400 animate-pulse' : 'bg-cyan-400'),
+                            ]"
+                            class="h-full transition-all duration-300"
+                            :style="{width: Math.max(0, Math.min(100, Number(activeServerStatus.cpu_percent || 0))) + '%'}"
+                        ></div>
+                    </div>
+
+                    <div class="flex items-center justify-between text-xs text-cyan-300/80">
+                        <span>内存占用</span>
+                        <span class="font-semibold text-cyan-100">{{ activeServerStatus.memory_percent ?? '--' }}%</span>
+                    </div>
+                    <div class="h-2 rounded bg-slate-800 overflow-hidden">
+                        <div
+                            :class="[
+                                Number(activeServerStatus.memory_percent || 0) >= 85 ? 'bg-rose-400 animate-pulse' : (Number(activeServerStatus.memory_percent || 0) >= 70 ? 'bg-amber-400 animate-pulse' : 'bg-blue-400'),
+                            ]"
+                            class="h-full transition-all duration-300"
+                            :style="{width: Math.max(0, Math.min(100, Number(activeServerStatus.memory_percent || 0))) + '%'}"
+                        ></div>
+                    </div>
+
+                    <div class="flex items-center justify-between text-xs text-cyan-300/80">
+                        <span>硬盘占用</span>
+                        <span class="font-semibold text-cyan-100">{{ activeServerStatus.disk_percent ?? '--' }}%</span>
+                    </div>
+                    <div class="h-2 rounded bg-slate-800 overflow-hidden">
+                        <div
+                            :class="[
+                                Number(activeServerStatus.disk_percent || 0) >= 90 ? 'bg-rose-400 animate-pulse' : (Number(activeServerStatus.disk_percent || 0) >= 75 ? 'bg-amber-400 animate-pulse' : 'bg-violet-400'),
+                            ]"
+                            class="h-full transition-all duration-300"
+                            :style="{width: Math.max(0, Math.min(100, Number(activeServerStatus.disk_percent || 0))) + '%'}"
+                        ></div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="rounded-lg border border-cyan-500/25 bg-slate-900/70 p-3">
+                        <div class="text-[11px] text-cyan-400/80">站点数量</div>
+                        <div class="text-lg font-semibold text-cyan-100 mt-1">{{ activeServerStatus.site_count }}</div>
+                    </div>
+                    <div class="rounded-lg border border-cyan-500/25 bg-slate-900/70 p-3">
+                        <div class="text-[11px] text-cyan-400/80">可用 IP</div>
+                        <div class="text-lg font-semibold text-cyan-100 mt-1">{{ activeServerStatus.available_ip_count }}</div>
+                    </div>
+                </div>
+
+                <div class="rounded-lg border border-cyan-500/25 bg-slate-900/70 p-3 space-y-2 text-xs">
+                    <div class="flex items-center justify-between">
+                        <span class="text-cyan-300/80">宝塔 API</span>
+                        <span :class="activeServerStatus.bt_ok ? 'text-emerald-400' : 'text-rose-400'">{{ activeServerStatus.bt_ok ? 'ONLINE' : 'OFFLINE' }}</span>
+                    </div>
+                    <div class="text-cyan-100/90 break-all">{{ activeServerStatus.bt_ok ? '连接正常' : (activeServerStatus.bt_message || '异常') }}</div>
+                    <div class="h-px bg-slate-800"></div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-cyan-300/80">SSH 隧道</span>
+                        <span :class="activeServerStatus.ssh_ok ? 'text-emerald-400' : 'text-rose-400'">{{ activeServerStatus.ssh_ok ? 'ONLINE' : 'OFFLINE' }}</span>
+                    </div>
+                    <div class="text-cyan-100/90 break-all">{{ activeServerStatus.ssh_ok ? '连接正常' : (activeServerStatus.ssh_message || '异常') }}</div>
+                </div>
+
+                <div class="pt-1 flex gap-2">
+                    <button @click="refreshOneServerStatus(activeServerStatus.server_id)" class="px-3 py-1.5 text-xs rounded border border-cyan-500/40 hover:border-cyan-300 text-cyan-100 hover:shadow-[0_0_14px_rgba(34,211,238,0.28)]">刷新详情</button>
+                    <button @click="siteFilterServerId = activeServerStatus.server_id; onSiteFilterChange(); showServerStatusDrawer = false" class="px-3 py-1.5 text-xs rounded border border-cyan-500/40 hover:border-cyan-300 text-cyan-100 hover:shadow-[0_0_14px_rgba(34,211,238,0.28)]">筛选该节点站点</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="showLogDetailDrawer" class="fixed inset-0 z-50 flex">
+        <div class="flex-1 bg-black/60" @click="showLogDetailDrawer = false"></div>
+        <div class="w-[520px] bg-panelbg border-l border-panelborder p-5 overflow-y-auto">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-white font-bold">日志详情</h3>
+                <button @click="showLogDetailDrawer = false" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div v-if="activeLogDetail">
+                <div class="text-xs text-gray-500 mb-3">
+                    {{ activeLogDetailType === 'operation' ? '操作日志' : '任务日志' }}
+                    · {{ new Date(activeLogDetail.created_at).toLocaleString() }}
+                </div>
+                <div class="text-sm text-gray-200 mb-2">{{ activeLogDetail.message || activeLogDetail.task_name || '-' }}</div>
+                <div class="text-xs text-gray-400 mb-3 break-all">
+                    {{ activeLogDetailType === 'operation' ? (activeLogDetail.action || '-') : (activeLogDetail.task_type || '-') }}
+                </div>
+                <pre class="text-xs bg-darkbg border border-panelborder rounded p-3 text-gray-300 whitespace-pre-wrap break-all">{{ prettyLogDetail(activeLogDetail.detail) }}</pre>
+            </div>
+        </div>
+    </div>
+
 </div>
 
 <script>
-    const { createApp, ref, reactive, computed, onMounted, onBeforeUnmount } = Vue;
-    // ⚠️⚠️⚠️ 最终防线：一定要改 IP ！！！
-    const API_BASE_URL = 'http://autoapi.qlzb.win:8230/api'; 
-    // const API_BASE_URL = 'http://127.0.0.1:8230/api'; 
+    const { createApp, ref, reactive, computed, onMounted, onBeforeUnmount, watch } = Vue;
+    const normalizeApiBase = (raw) => {
+        const val = String(raw || '').trim();
+        if (!val) return '';
+        const noSlash = val.replace(/\/+$/, '');
+        return /\/api$/i.test(noSlash) ? noSlash : `${noSlash}/api`;
+    };
+    // 优先级：?api=... > localStorage > 自动识别（localhost 用 127.0.0.1:8230，其余同源）
+    const queryApi = new URLSearchParams(window.location.search).get('api');
+    if (queryApi) localStorage.setItem('AUTOCMS_API_BASE_URL', queryApi);
+    const savedApi = localStorage.getItem('AUTOCMS_API_BASE_URL');
+    const host = window.location.hostname;
+    const isLocalDevHost = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+    const autoApi = isLocalDevHost
+        ? 'http://127.0.0.1:8230/api'
+        : `${window.location.protocol}//${window.location.host}/api`;
+    const API_BASE_URL = normalizeApiBase(queryApi || savedApi || autoApi);
+    const API_SOURCE_LABEL = queryApi ? 'query' : (savedApi ? 'localStorage' : (isLocalDevHost ? 'auto-local' : 'auto-same-origin'));
 
     const parseError = (err) => typeof err?.response?.data?.detail === 'string' ? err.response.data.detail : err?.message || '未知错误';
     const DOMAIN_REGEX = /^(?=.{1,253}$)(?!-)(?:[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,63}$/;
@@ -554,6 +857,8 @@
         setup() {
             const currentTab = ref('sites');
             const apiStatus = ref('checking');
+            const apiBaseUrl = ref(API_BASE_URL);
+            const apiSourceLabel = ref(API_SOURCE_LABEL);
             const toasts = ref([]);
             
             const showToast = (text, type = 'success') => {
@@ -572,7 +877,15 @@
             const showAddServerModal = ref(false);
             const testingId = ref(null);
             const addForm = reactive({ name: '', main_ip: '', ip_pool: '', bt_protocol: 'http', bt_port: 8888, ssh_port: 22, bt_key: '' });
-            const fetchServers = async () => { try { servers.value = await ax.get('/servers/'); } catch(e){} };
+            const fetchServers = async () => {
+                try {
+                    servers.value = await ax.get('/servers/');
+                    if (!deployForm.serverId && servers.value.length > 0) {
+                        deployForm.serverId = servers.value[0].id;
+                        onDeployServerChange();
+                    }
+                } catch(e){}
+            };
             
             const validateIpPool = (text) => {
                 const lines = text.split('\n').map(l => l.trim()).filter(l => l);
@@ -661,12 +974,12 @@
             const submitBulkTdk = async () => {
                 isSubmittingTdk.value = true;
                 try {
-                    await ax.post('/tdks/batch', finalParsedTdks.value);
-                    showToast(`成功导入 ${parsedTdksCount.value} 条 TDK！`, 'success');
+                    const res = await ax.post('/tdks/batch', finalParsedTdks.value);
+                    showToast(`TDK导入任务已入队：${res.queued || parsedTdksCount.value} 条`, 'success');
                     showAddTdkModal.value = false;
                     bulkTdkInput.value = '';
                     parsedTdksCount.value = 0;
-                    fetchTdks();
+                    fetchTaskLogs();
                 } catch(e) { showToast(e, 'error'); }
                 finally { isSubmittingTdk.value = false; }
             };
@@ -687,6 +1000,22 @@
             const isLoadingSiteLogs = ref(false);
             const siteLogWs = ref(null);
             const isSiteLogStreaming = ref(false);
+            const showTdkSwitchDrawer = ref(false);
+            const tdkSwitchTargetIds = ref([]);
+            const tdkSwitchContextLabel = ref('');
+            const isSwitchingTdk = ref(false);
+            const serverStatusCards = ref([]);
+            const showServerStatusDrawer = ref(false);
+            const activeServerStatus = ref(null);
+            const operationLogs = ref([]);
+            const taskLogs = ref([]);
+            const homeLogTab = ref('task');
+            const homeTaskStatusFilter = ref('all');
+            const uploadTaskStatusFilter = ref('all');
+            const handledTaskStateKeys = new Set();
+            const showLogDetailDrawer = ref(false);
+            const activeLogDetail = ref(null);
+            const activeLogDetailType = ref('operation');
             const isAllSitesSelected = computed(() => sites.value.length > 0 && sites.value.every(s => selectedSiteIds.value.includes(s.id)));
             const fetchSites = async () => {
                 try {
@@ -711,6 +1040,103 @@
                 sitePage.value = nextPage;
                 await fetchSites();
             };
+            const fetchServerStatusSummary = async () => {
+                try {
+                    const res = await ax.get('/servers/status-summary');
+                    serverStatusCards.value = res.items || [];
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const openServerStatusDrawer = (item) => {
+                activeServerStatus.value = item;
+                showServerStatusDrawer.value = true;
+            };
+            const refreshOneServerStatus = async (serverId) => {
+                try {
+                    const res = await ax.get(`/servers/${serverId}/status`);
+                    const item = res.item;
+                    activeServerStatus.value = item;
+                    const idx = serverStatusCards.value.findIndex(s => s.server_id === serverId);
+                    if (idx >= 0) serverStatusCards.value[idx] = item;
+                    else serverStatusCards.value.push(item);
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const fetchOperationLogs = async () => {
+                try {
+                    operationLogs.value = await ax.get('/logs/operations?limit=200');
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const fetchTaskLogs = async () => {
+                try {
+                    taskLogs.value = await ax.get('/logs/tasks?limit=200');
+                    // 任务联动刷新：批量TDK切换任务结束后，自动刷新站点列表
+                    if (currentTab.value === 'sites') {
+                        let needRefreshSites = false;
+                        for (const item of (taskLogs.value || [])) {
+                            if (String(item.task_type || '') !== 'switch_tdk_batch') continue;
+                            const status = String(item.status || '').toLowerCase();
+                            if (!['success', 'failed'].includes(status)) continue;
+                            const key = `${item.id}:${status}`;
+                            if (!handledTaskStateKeys.has(key)) {
+                                handledTaskStateKeys.add(key);
+                                needRefreshSites = true;
+                            }
+                        }
+                        if (needRefreshSites) {
+                            await fetchSites();
+                            await fetchServerStatusSummary();
+                        }
+                    }
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const uploadTaskLogs = computed(() => (taskLogs.value || []).filter(x => x.task_type === 'template_upload').slice(0, 80));
+            const filteredUploadTaskLogs = computed(() => {
+                if (uploadTaskStatusFilter.value === 'all') return uploadTaskLogs.value;
+                return uploadTaskLogs.value.filter(x => String(x.status || '').toLowerCase() === uploadTaskStatusFilter.value);
+            });
+            const filteredHomeTaskLogs = computed(() => {
+                const all = (taskLogs.value || []).slice(0, 60);
+                if (homeTaskStatusFilter.value === 'all') return all;
+                return all.filter(x => String(x.status || '').toLowerCase() === homeTaskStatusFilter.value);
+            });
+            const taskStatusMeta = (status) => {
+                const s = String(status || '').toLowerCase();
+                if (s === 'success') return { emoji: '✅', label: '成功', class: 'text-success' };
+                if (s === 'failed') return { emoji: '❌', label: '失败', class: 'text-danger' };
+                if (s === 'running') return { emoji: '⏳', label: '执行中', class: 'text-warning' };
+                if (s === 'queued') return { emoji: '🕓', label: '排队中', class: 'text-warning' };
+                return { emoji: 'ℹ️', label: s || '未知', class: 'text-gray-300' };
+            };
+            const openLogDetailDrawer = async (type, item) => {
+                activeLogDetailType.value = type;
+                if (type === 'task' && item?.id) {
+                    try {
+                        activeLogDetail.value = await ax.get(`/logs/tasks/${item.id}`);
+                    } catch (e) {
+                        showToast(e, 'error');
+                        return;
+                    }
+                } else {
+                    activeLogDetail.value = item || null;
+                }
+                showLogDetailDrawer.value = true;
+            };
+            const prettyLogDetail = (detail) => {
+                if (!detail) return '-';
+                try {
+                    const val = typeof detail === 'string' ? JSON.parse(detail) : detail;
+                    return JSON.stringify(val, null, 2);
+                } catch (_) {
+                    return String(detail);
+                }
+            };
             const toggleSelectSite = (siteId, evt) => {
                 const checked = !!evt?.target?.checked;
                 if (checked) {
@@ -723,28 +1149,76 @@
                 const checked = !!evt?.target?.checked;
                 selectedSiteIds.value = checked ? sites.value.map(s => s.id) : [];
             };
-            const deleteSite = async (id) => {
-                if(confirm('确认删除该站点记录? (仅删除记录，不影响服务器实际站点)')) {
-                    try {
-                        await ax.delete(`/sites/${id}`);
-                        selectedSiteIds.value = selectedSiteIds.value.filter(sid => sid !== id);
-                        fetchSites();
-                        showToast('站点记录已删除', 'success');
-                    } catch(e) {}
+            const deleteSite = async (site) => {
+                const removeBt = confirm('是否同时在宝塔删除站点及所有数据？\n确定=联动删除宝塔；取消=仅删除本地记录。');
+                if (!confirm(removeBt ? '确认执行“本地+宝塔”双重删除？' : '确认仅删除本地记录？')) return;
+                try {
+                    await ax.delete(`/sites/${site.id}?purge_bt=${removeBt ? 'true' : 'false'}`);
+                    selectedSiteIds.value = selectedSiteIds.value.filter(sid => sid !== site.id);
+                    await fetchSites();
+                    showToast(removeBt ? '站点已从本地与宝塔删除' : '站点记录已删除', 'success');
+                } catch(e) {
+                    showToast(e, 'error');
                 }
             };
             const batchDeleteSites = async () => {
                 const ids = [...selectedSiteIds.value];
                 if (!ids.length) return;
-                if (!confirm(`确认批量删除 ${ids.length} 条站点记录吗？`)) return;
+                const removeBt = confirm('批量删除时，是否同时在宝塔删除站点及所有数据？\n确定=联动删除宝塔；取消=仅删除本地记录。');
+                if (!confirm(removeBt ? `确认批量删除 ${ids.length} 条（本地+宝塔）？` : `确认仅删除本地 ${ids.length} 条记录？`)) return;
                 try {
-                    const res = await ax.post('/sites/batch-delete', { site_ids: ids });
+                    const res = await ax.post(`/sites/batch-delete?purge_bt=${removeBt ? 'true' : 'false'}`, { site_ids: ids });
                     selectedSiteIds.value = [];
-                    showToast(`批量删除完成：${res.deleted || 0} 条`, 'success');
+                    const btFailCount = (res.bt_failed || []).length;
+                    if (removeBt) {
+                        showToast(`批量删除完成：本地 ${res.deleted || 0} 条，宝塔 ${res.bt_deleted || 0} 条`, btFailCount ? 'warning' : 'success');
+                        if (btFailCount) {
+                            const preview = res.bt_failed.slice(0, 3).map(x => x.domain).join(', ');
+                            showToast(`宝塔删除失败 ${btFailCount} 条：${preview}${btFailCount > 3 ? ' ...' : ''}`, 'warning');
+                        }
+                    } else {
+                        showToast(`批量删除完成：${res.deleted || 0} 条`, 'success');
+                    }
                     if (sitePage.value > 1 && sites.value.length <= 1) sitePage.value -= 1;
                     fetchSites();
                 } catch (e) {
                     showToast(e, 'error');
+                }
+            };
+            const openBatchTdkDrawer = () => {
+                const ids = [...selectedSiteIds.value];
+                if (!ids.length) return;
+                tdkSwitchTargetIds.value = ids;
+                tdkSwitchContextLabel.value = `批量切换 ${ids.length} 个站点`;
+                showTdkSwitchDrawer.value = true;
+            };
+            const openSingleTdkDrawer = (site) => {
+                if (!site?.id) return;
+                if (!tdks.value.length) return showToast('暂无可用TDK方案', 'error');
+                tdkSwitchTargetIds.value = [site.id];
+                tdkSwitchContextLabel.value = `单站点切换：${site.domain}（当前：${site.tdk_name || '-'}）`;
+                showTdkSwitchDrawer.value = true;
+            };
+            const closeTdkSwitchDrawer = () => {
+                if (isSwitchingTdk.value) return;
+                showTdkSwitchDrawer.value = false;
+                tdkSwitchTargetIds.value = [];
+                tdkSwitchContextLabel.value = '';
+            };
+            const applyTdkToTargets = async (tdk) => {
+                const ids = [...tdkSwitchTargetIds.value];
+                if (!ids.length || !tdk?.id) return;
+                if (!confirm(`确认切换到 TDK：${tdk.name} ？`)) return;
+                isSwitchingTdk.value = true;
+                try {
+                    const res = await ax.post('/sites/batch-switch-tdk', { site_ids: ids, tdk_id: tdk.id });
+                    showToast(`TDK切换任务已入队：${res.queued || 0} 条`, 'success');
+                    await fetchTaskLogs();
+                    closeTdkSwitchDrawer();
+                } catch (e) {
+                    showToast(e, 'error');
+                } finally {
+                    isSwitchingTdk.value = false;
                 }
             };
             const cleanupStuckDeployingSites = async () => {
@@ -760,9 +1234,7 @@
                     showToast(e, 'error');
                 }
             };
-            const copySiteAdminCreds = async (site) => {
-                if (!site?.admin_username || !site?.admin_password) return showToast('当前站点无后台凭据', 'error');
-                const text = `账号: ${site.admin_username}\n密码: ${site.admin_password}\n后台: http://${site.domain}/${site.admin_path}`;
+            const copyText = async (text) => {
                 try {
                     if (navigator.clipboard && window.isSecureContext) {
                         await navigator.clipboard.writeText(text);
@@ -779,10 +1251,20 @@
                         document.body.removeChild(ta);
                         if (!ok) throw new Error('copy failed');
                     }
-                    showToast(`已复制 ${site.domain} 的后台凭据`, 'success');
+                    return true;
                 } catch (_) {
-                    showToast('复制后台凭据失败，请检查浏览器权限', 'error');
+                    return false;
                 }
+            };
+            const copySiteAdminUsername = async (site) => {
+                if (!site?.admin_username) return showToast('当前站点无后台账号', 'error');
+                const ok = await copyText(site.admin_username);
+                showToast(ok ? `已复制 ${site.domain} 后台账号` : '复制后台账号失败，请检查浏览器权限', ok ? 'success' : 'error');
+            };
+            const copySiteAdminPassword = async (site) => {
+                if (!site?.admin_password) return showToast('当前站点无后台密码', 'error');
+                const ok = await copyText(site.admin_password);
+                showToast(ok ? `已复制 ${site.domain} 后台密码` : '复制后台密码失败，请检查浏览器权限', ok ? 'success' : 'error');
             };
             const openSiteLogs = async (site) => {
                 activeLogSite.value = site;
@@ -798,7 +1280,8 @@
                 if (!activeLogSite.value?.id) return;
                 isLoadingSiteLogs.value = true;
                 try {
-                    siteLogs.value = await ax.get(`/sites/${activeLogSite.value.id}/logs?limit=500`);
+                    const logs = await ax.get(`/sites/${activeLogSite.value.id}/logs?limit=500`);
+                    siteLogs.value = [...(logs || [])].sort((a, b) => (b.id || 0) - (a.id || 0));
                 } catch (e) {
                     showToast(e, 'error');
                 } finally {
@@ -819,7 +1302,11 @@
                         const payload = JSON.parse(evt.data || '{}');
                         if (payload.type !== 'log' || !payload.data?.id) return;
                         const exists = siteLogs.value.some(item => item.id === payload.data.id);
-                        if (!exists) siteLogs.value.push(payload.data);
+                        if (!exists) siteLogs.value.unshift(payload.data);
+                        if (["done", "error"].includes(String(payload.data.stage || ""))) {
+                            fetchSites();
+                            fetchServerStatusSummary();
+                        }
                     } catch (_) {}
                 };
             };
@@ -843,8 +1330,20 @@
             const uploadLastFailed = ref(false);
             const uploadLastPayload = ref(null);
             const fileInput = ref(null);
-            const uploadForm = reactive({ name: '', pkg_type: 'core' });
-            const fetchTemplates = async () => { try { templates.value = await ax.get('/templates/'); } catch(e){} };
+            const uploadForm = reactive({ name: '', pkg_type: 'theme' });
+            const fetchTemplates = async () => {
+                try {
+                    templates.value = await ax.get('/templates/');
+                    if (!deployForm.selectedCore) {
+                        const firstCore = templates.value.find(t => t.pkg_type === 'core');
+                        if (firstCore) deployForm.selectedCore = firstCore;
+                    }
+                } catch(e){}
+            };
+            const refreshTemplatePage = async () => {
+                await fetchTemplates();
+                await fetchTaskLogs();
+            };
             const formatBytes = (bytes) => {
                 if (!bytes || bytes <= 0) return '0 B';
                 const units = ['B', 'KB', 'MB', 'GB'];
@@ -934,14 +1433,14 @@
                         }
                     }
                     uploadProgress.value = 100;
-                    showToast('大包已成功直传至华为云 OBS！', 'success');
+                    showToast('资源包上传任务已入队，请在任务日志查看进度', 'success');
                     showUploadModal.value = false;
                     fileInput.value.value = ''; 
                     uploadForm.name = '';
                     uploadLastFailed.value = false;
                     uploadLastPayload.value = null;
                     resetUploadState();
-                    fetchTemplates();
+                    fetchTaskLogs();
                 } catch(e) {
                     const cancelled = e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError' || String(e || '').includes('canceled');
                     if (!cancelled) {
@@ -1234,6 +1733,7 @@
                         sites: sites,
                         core_key: deployForm.selectedCore.obs_path,
                         template_key: deployForm.selectedTheme.obs_path,
+                        tdk_name: deployForm.selectedTdk.name || '',
                         admin_path: validated.adminPath,
                         admin_username: validated.adminUsername,
                         admin_password: validated.adminPassword,
@@ -1246,19 +1746,73 @@
                         showToast(`幂等保护：已跳过 ${res.skipped_count} 个部署中域名`, 'warning');
                     }
                     deployForm.domainsText = ''; updateLineCount();
+                    currentTab.value = 'sites';
+                    await fetchSites();
+                    await fetchServerStatusSummary();
                 } catch(e) { showToast(e, 'error'); }
                 finally { isDeploying.value = false; }
             };
 
-            onMounted(() => { checkHealth(); fetchServers(); fetchTdks(); fetchTemplates(); fetchSites(); });
-            onBeforeUnmount(() => { disconnectSiteLogStream(); });
+            let siteAutoRefreshTimer = null;
+            let panelRefreshTimer = null;
+            let siteLogModalRefreshTimer = null;
+            onMounted(() => {
+                checkHealth(); fetchServers(); fetchTdks(); fetchTemplates(); fetchSites(); fetchServerStatusSummary(); fetchOperationLogs(); fetchTaskLogs();
+                siteAutoRefreshTimer = setInterval(() => {
+                    if (currentTab.value !== 'sites') return;
+                    const hasRunning = sites.value.some(s => s.status === 'deploying');
+                    if (hasRunning || isDeploying.value) {
+                        fetchSites();
+                        fetchServerStatusSummary();
+                    }
+                }, 20000);
+                panelRefreshTimer = setInterval(() => {
+                    if (currentTab.value === 'sites') {
+                        fetchOperationLogs();
+                        fetchTaskLogs();
+                    } else if (currentTab.value === 'templates') {
+                        fetchTaskLogs();
+                        fetchTemplates();
+                    }
+                }, 3000);
+                siteLogModalRefreshTimer = setInterval(() => {
+                    if (!showSiteLogsModal.value || !activeLogSite.value?.id) return;
+                    fetchSiteLogs();
+                    const s = sites.value.find(x => x.id === activeLogSite.value.id);
+                    if (s && s.status !== 'deploying') {
+                        fetchSites();
+                        fetchServerStatusSummary();
+                    }
+                }, 2500);
+            });
+            watch(currentTab, (tab) => {
+                if (tab === 'sites') {
+                    fetchSites();
+                    fetchServerStatusSummary();
+                    fetchOperationLogs();
+                    fetchTaskLogs();
+                } else if (tab === 'templates') {
+                    fetchTemplates();
+                    fetchTaskLogs();
+                } else if (tab === 'tdks') {
+                    fetchOperationLogs();
+                    fetchTaskLogs();
+                }
+            });
+            onBeforeUnmount(() => {
+                disconnectSiteLogStream();
+                if (siteAutoRefreshTimer) clearInterval(siteAutoRefreshTimer);
+                if (panelRefreshTimer) clearInterval(panelRefreshTimer);
+                if (siteLogModalRefreshTimer) clearInterval(siteLogModalRefreshTimer);
+            });
 
             return {
-                currentTab, apiStatus, toasts, showToast,
-                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, cleanupStuckDeployingSites, copySiteAdminCreds, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, closeSiteLogsModal, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs, isSiteLogStreaming,
+                currentTab, apiStatus, apiBaseUrl, apiSourceLabel, toasts, showToast,
+                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, openBatchTdkDrawer, openSingleTdkDrawer, showTdkSwitchDrawer, tdkSwitchContextLabel, closeTdkSwitchDrawer, applyTdkToTargets, cleanupStuckDeployingSites, copySiteAdminUsername, copySiteAdminPassword, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, closeSiteLogsModal, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs, isSiteLogStreaming, serverStatusCards, fetchServerStatusSummary, showServerStatusDrawer, activeServerStatus, openServerStatusDrawer, refreshOneServerStatus,
+                operationLogs, taskLogs, homeLogTab, homeTaskStatusFilter, uploadTaskStatusFilter, fetchOperationLogs, fetchTaskLogs, uploadTaskLogs, filteredUploadTaskLogs, filteredHomeTaskLogs, taskStatusMeta, showLogDetailDrawer, activeLogDetail, activeLogDetailType, openLogDetailDrawer, prettyLogDetail,
                 servers, showAddServerModal, addForm, submitAddServer, testServer, updateServerSshPort, deleteServer, testingId,
                 tdks, showAddTdkModal, bulkTdkInput, parsedTdksCount, parseTdkLines, submitBulkTdk, deleteTdk, isSubmittingTdk,
-                templates, showUploadModal, uploadForm, isUploading, submitUpload, fileInput, deleteTemplate, uploadProgress, uploadedSizeText, totalSizeText, uploadSpeedText, closeUploadModal, cancelUpload, retryLastUpload, uploadRetryLimit, currentUploadAttempt, uploadLastFailed, hasRetryUploadPayload,
+                templates, showUploadModal, uploadForm, isUploading, submitUpload, fileInput, deleteTemplate, refreshTemplatePage, uploadProgress, uploadedSizeText, totalSizeText, uploadSpeedText, closeUploadModal, cancelUpload, retryLastUpload, uploadRetryLimit, currentUploadAttempt, uploadLastFailed, hasRetryUploadPayload,
                 deployForm, activeDrawer, openDrawer, selectResource, filteredTemplates, lineCount, updateLineCount, isDeploying, submitDeploy, isFormValid, availableIpCount, copyAvailableIps, hostHeaderOptions, toggleHostHeader, parseAvailableIpPool, parsedIpSummary, parsedIpPreview, domainSeedText, generateDomainIpTemplate, regenAdminCredentials, onDeployServerChange
             };
         }

@@ -11,7 +11,10 @@ class Site(Base):
     server_id = Column(Integer, ForeignKey("servers.id"), comment="所属服务器ID")
     
     template_key = Column(String, comment="使用的模板OBS路径")
+    tdk_name = Column(String, nullable=True, comment="使用的TDK方案名")
     tdk_title = Column(String, comment="配置的TDK标题")
+    tdk_keywords = Column(String, nullable=True, comment="配置的TDK关键词")
+    tdk_description = Column(Text, nullable=True, comment="配置的TDK描述")
     admin_path = Column(String, comment="后台路径")
     admin_username = Column(String, nullable=True, comment="后台账号")
     admin_password = Column(String, nullable=True, comment="后台密码（明文展示）")

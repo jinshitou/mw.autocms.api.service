@@ -11,6 +11,7 @@ class DeployRequest(BaseModel):
     core_key: str
     template_key: str
     tdk_config: Dict[str, str]
+    tdk_name: str = ""
     admin_path: str
     admin_username: str = ""
     admin_password: str = ""

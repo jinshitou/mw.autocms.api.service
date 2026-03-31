@@ -59,7 +59,7 @@ class BaotaAPI:
                 raise Exception(f"宝塔接口业务失败: {url} msg={msg}")
             return body
             
-    async def create_site(self, domain: str, host_headers=None, php_version: str = "74") -> dict:
+    async def create_site(self, domain: str, host_headers=None, php_version: str = "74", remark: str = "") -> dict:
         host_headers = host_headers or ["@", "www"]
         full_domains = []
         for h in host_headers:
@@ -94,7 +94,7 @@ class BaotaAPI:
                 "type_id": "0",
                 "type": "PHP",
                 "version": ver,
-                "ps": "批量易优API创建",
+                "ps": (remark or "批量易优API创建")[:120],
                 "ftp": "false",
                 "sql": "false",
             }
@@ -129,3 +129,23 @@ class BaotaAPI:
                 # 幂等化：数据库已存在视为可继续
                 return {"status": True, "msg": "数据库已存在，按幂等继续"}
             raise
+
+    async def delete_site(self, domain: str) -> dict:
+        # 宝塔删除站点接口在不同版本参数存在差异，按常见参数逐步尝试。
+        candidates = [
+            {"id": domain, "webname": domain, "path": f"/www/wwwroot/{domain}", "ftp": "1", "database": "1"},
+            {"webname": domain, "path": f"/www/wwwroot/{domain}", "ftp": "1", "database": "1"},
+            {"id": domain, "ftp": "1", "database": "1"},
+            {"name": domain, "ftp": "1", "database": "1"},
+        ]
+        last_error = None
+        for data in candidates:
+            try:
+                return await self._post("/site?action=DeleteSite", data)
+            except Exception as exc:
+                last_error = exc
+                msg = str(exc)
+                if "不存在" in msg or "not exists" in msg.lower():
+                    return {"status": True, "msg": "站点不存在，按幂等继续"}
+                continue
+        raise Exception(f"宝塔删除站点失败: {last_error}")

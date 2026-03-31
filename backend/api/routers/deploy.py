@@ -10,6 +10,7 @@ from core.database import get_db
 from models.server import Server
 from models.site import Site
 from models.site_log import SiteDeployLog
+from services.audit_service import create_task_log, update_task_log, log_operation
 
 router = APIRouter()
 
@@ -126,7 +127,10 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
         site_record.bind_ip = bind_ip
         site_record.server_id = target_server.id
         site_record.template_key = request.template_key
+        site_record.tdk_name = (request.tdk_name or "").strip() or None
         site_record.tdk_title = request.tdk_config.get("title", "")
+        site_record.tdk_keywords = request.tdk_config.get("keywords", "")
+        site_record.tdk_description = request.tdk_config.get("description", "")
         site_record.admin_path = admin_path
         site_record.admin_username = req_admin_username or _gen_admin_username(domain)
         site_record.admin_password = req_admin_password or _gen_admin_password()
@@ -137,6 +141,15 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
         db.refresh(site_record)
         db.add(SiteDeployLog(site_id=site_record.id, level="info", stage="queue", message="任务已入队，等待 Celery Worker 执行"))
         db.commit()
+
+        task_log = create_task_log(
+            db,
+            task_type="deploy_site",
+            task_name="批量上站-单站任务",
+            message=f"已入队: {domain}",
+            detail={"site_id": site_record.id, "domain": domain, "bind_ip": bind_ip},
+            status="queued",
+        )
 
         # 2. 发送 Celery 任务，并把 site_record.id 传给任务，以便任务完成后更新状态
         task = process_single_site.delay(
@@ -152,11 +165,13 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
             admin_password=site_record.admin_password,
             host_headers=headers,
             retry_limit=retry_limit,
+            task_log_id=task_log.id,
             ssh_port=int(getattr(target_server, "ssh_port", 22) or 22),
             bt_url=computed_bt_url,
             bt_key=target_server.bt_key
         )
-        task_records.append({"domain": domain, "task_id": task.id})
+        update_task_log(db, task_log.id, task_ref=task.id)
+        task_records.append({"domain": domain, "task_id": task.id, "task_log_id": task_log.id})
 
     accepted_count = len(task_records)
     skipped_count = len(skipped_domains)
@@ -167,6 +182,14 @@ async def submit_batch_deploy(request: DeployRequest, db: Session = Depends(get_
         msg_parts.append(f"跳过 {skipped_count} 个重复部署中站点")
     if not msg_parts:
         msg_parts.append("没有可入队任务（均被幂等保护跳过）")
+
+    log_operation(
+        db,
+        action="deploy.batch_submit",
+        message=f"批量上站提交：接收 {accepted_count} 条，跳过 {skipped_count} 条",
+        detail={"server_id": request.server_id, "accepted_count": accepted_count, "skipped_domains": skipped_domains},
+        username=None,
+    )
 
     return {
         "status": "success",

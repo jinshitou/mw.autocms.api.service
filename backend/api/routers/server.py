@@ -9,6 +9,8 @@ import socket
 
 from core.database import get_db
 from models.server import Server
+from models.site import Site
+from services.audit_service import log_operation
 from schemas.server import ServerCreate, ServerResponse, ServerSshPortUpdate
 
 router = APIRouter()
@@ -67,6 +69,12 @@ def create_server(server: ServerCreate, db: Session = Depends(get_db)):
     db.add(new_server)
     db.commit()
     db.refresh(new_server)
+    log_operation(
+        db,
+        action="server.create",
+        message=f"新增服务器: {new_server.name} ({new_server.main_ip})",
+        detail={"server_id": new_server.id, "ssh_port": new_server.ssh_port, "bt_port": new_server.bt_port},
+    )
     return new_server
 
 @router.get("/", response_model=List[ServerResponse])
@@ -80,6 +88,7 @@ def delete_server(server_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="未找到")
     db.delete(db_server)
     db.commit()
+    log_operation(db, action="server.delete", message=f"删除服务器: {db_server.name} ({db_server.main_ip})", detail={"server_id": server_id})
     return {"status": "success"}
 
 
@@ -94,6 +103,7 @@ def update_server_ssh_port(server_id: int, payload: ServerSshPortUpdate, db: Ses
     server.ssh_port = ssh_port
     db.commit()
     db.refresh(server)
+    log_operation(db, action="server.update_ssh_port", message=f"更新SSH端口: {server.name} -> {ssh_port}", detail={"server_id": server.id, "ssh_port": ssh_port})
     return server
 
 @router.post("/{server_id}/test")
@@ -125,3 +135,126 @@ async def test_server_connection(server_id: int, db: Session = Depends(get_db)):
             return {"status": "error", "message": f"宝塔连接成功，但 SSH({ssh_port}) 不可达: {ssh_exc}"}
     except Exception as e:
         return {"status": "error", "message": f"探测失败: {str(e)}"}
+
+
+def _extract_percent(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    text = text.replace("%", "").strip()
+    try:
+        num = float(text)
+        if num < 0:
+            return None
+        return round(num, 2)
+    except Exception:
+        return None
+
+
+def _to_float(value):
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+async def _fetch_server_status(server: Server, db: Session):
+    bt_ok = False
+    ssh_ok = False
+    cpu = mem = disk = None
+    bt_msg = ""
+    ssh_msg = ""
+
+    bt_url = f"{server.bt_protocol}://{server.main_ip}:{server.bt_port}"
+    now_time = int(time.time())
+    md5_key = hashlib.md5(server.bt_key.encode('utf-8')).hexdigest()
+    request_token = hashlib.md5((str(now_time) + md5_key).encode('utf-8')).hexdigest()
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=8.0) as client:
+            res = await client.post(
+                f"{bt_url}/system?action=GetSystemTotal",
+                data={'request_time': now_time, 'request_token': request_token}
+            )
+        if res.status_code == 200:
+            data = res.json()
+            if not (isinstance(data, dict) and data.get('status') is False):
+                bt_ok = True
+                bt_msg = "ok"
+                cpu = _extract_percent(data.get("cpuRealUsed") or data.get("cpu") or data.get("cpuRate") or data.get("cpuUsed"))
+                mem_total = _to_float(data.get("memTotal"))
+                mem_used = _to_float(data.get("memRealUsed"))
+                if mem_total and mem_total > 0 and mem_used is not None:
+                    mem = round((mem_used / mem_total) * 100, 2)
+                else:
+                    mem = _extract_percent(data.get("memRate"))
+
+                try:
+                    async with httpx.AsyncClient(verify=False, timeout=8.0) as client:
+                        dres = await client.post(
+                            f"{bt_url}/system?action=GetDiskInfo",
+                            data={'request_time': now_time, 'request_token': request_token}
+                        )
+                    if dres.status_code == 200:
+                        disk_data = dres.json()
+                        if isinstance(disk_data, list) and disk_data:
+                            root = next((item for item in disk_data if str(item.get("path")) == "/"), disk_data[0])
+                            size = root.get("size") if isinstance(root, dict) else None
+                            if isinstance(size, list) and len(size) >= 4:
+                                disk = _extract_percent(size[3])
+                except Exception:
+                    pass
+            else:
+                bt_msg = str(data.get("msg") or "业务失败")
+        else:
+            bt_msg = f"http {res.status_code}"
+    except Exception as exc:
+        bt_msg = str(exc)
+
+    ssh_port = int(getattr(server, "ssh_port", 22) or 22)
+    try:
+        with socket.create_connection((server.main_ip, ssh_port), timeout=3):
+            pass
+        ssh_ok = True
+        ssh_msg = "ok"
+    except Exception as exc:
+        ssh_msg = str(exc)
+
+    ip_list = [item for item in (server.ip_pool or "").split(",") if item.strip()]
+    site_count = db.query(Site).filter(Site.server_id == server.id).count()
+
+    return {
+        "server_id": server.id,
+        "name": server.name,
+        "main_ip": server.main_ip,
+        "cpu_percent": cpu,
+        "memory_percent": mem,
+        "disk_percent": disk,
+        "site_count": site_count,
+        "available_ip_count": len(ip_list),
+        "bt_ok": bt_ok,
+        "ssh_ok": ssh_ok,
+        "bt_message": bt_msg,
+        "ssh_message": ssh_msg,
+    }
+
+
+@router.get("/status-summary")
+async def get_server_status_summary(db: Session = Depends(get_db)):
+    servers = db.query(Server).all()
+    items = []
+    for server in servers:
+        items.append(await _fetch_server_status(server, db))
+    return {"status": "success", "items": items}
+
+
+@router.get("/{server_id}/status")
+async def get_server_status(server_id: int, db: Session = Depends(get_db)):
+    server = db.query(Server).filter(Server.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="未找到服务器")
+    item = await _fetch_server_status(server, db)
+    return {"status": "success", "item": item}
