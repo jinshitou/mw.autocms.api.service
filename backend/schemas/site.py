@@ -14,6 +14,10 @@ class SiteBase(BaseModel):
     admin_path: str
     admin_username: Optional[str] = None
     admin_password: Optional[str] = None
+    https_enabled: Optional[bool] = False
+    https_auto_renew: Optional[bool] = True
+    https_expire_at: Optional[datetime] = None
+    https_updated_at: Optional[datetime] = None
     status: str
     error_msg: Optional[str] = None
 
@@ -41,6 +45,11 @@ class SiteBatchDeleteRequest(BaseModel):
 class SiteBatchSwitchTdkRequest(BaseModel):
     site_ids: List[int] = Field(default_factory=list)
     tdk_id: int
+
+
+class SiteBatchHttpsRequest(BaseModel):
+    site_ids: List[int] = Field(default_factory=list)
+    force_renew: bool = True
 
 
 class SiteDeployLogResponse(BaseModel):

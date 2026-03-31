@@ -1,6 +1,8 @@
 from worker.celery_app import celery_app
 from services.deploy_service import DeployEngine
 from core.database import SessionLocal
+from core.bt_api_client import BaotaAPI
+from core.ssh_client import execute_remote_cmd
 from core.obs_client import OBSClient
 import models.server  # noqa: F401 - 确保 SQLAlchemy 能解析 sites.server_id 外键
 from models.site import Site
@@ -18,12 +20,218 @@ import json
 import os
 import uuid
 import redis
+from datetime import datetime, timezone
+import base64
+import shlex
+import re
 
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 LOG_CHANNEL_PREFIX = "site_logs"
 _redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 _obs_client = OBSClient()
+
+
+def _safe_json_dumps(data):
+    try:
+        return json.dumps(data, ensure_ascii=False)
+    except Exception:
+        return "{}"
+
+
+async def _panel_site_exists(server: Server, domain: str) -> bool:
+    py_script = (
+        "import os,sys,json\n"
+        "os.chdir('/www/server/panel/')\n"
+        "sys.path.insert(0,'/www/server/panel/')\n"
+        "sys.path.insert(0,'class/')\n"
+        "import public\n"
+        f"domain = {json.dumps(domain)}\n"
+        "cnt = public.M('sites').where('name=?',(domain,)).count()\n"
+        "print(json.dumps({'status': True, 'exists': bool(cnt), 'count': int(cnt or 0)}, ensure_ascii=False))\n"
+    )
+    py_b64 = base64.b64encode(py_script.encode("utf-8")).decode("ascii")
+    remote_py = f"/tmp/autocms_site_exists_{domain.replace('.', '_')}.py"
+    cmd = (
+        "bash -lc 'set -euo pipefail; "
+        "pybin=/www/server/panel/pyenv/bin/python3.7; "
+        "[ -x \"$pybin\" ] || pybin=/www/server/panel/pyenv/bin/python3; "
+        "[ -x \"$pybin\" ] || pybin=python3; "
+        f"printf %s {py_b64} | base64 -d > {shlex.quote(remote_py)}; "
+        f"\"$pybin\" {shlex.quote(remote_py)}; "
+        f"rm -f {shlex.quote(remote_py)}'"
+    )
+    out = await execute_remote_cmd(server.main_ip, int(getattr(server, "ssh_port", 22) or 22), cmd, timeout_sec=60)
+    parsed = None
+    for line in reversed((out or "").splitlines()):
+        text = line.strip()
+        if not text.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(text)
+            break
+        except Exception:
+            continue
+    if not isinstance(parsed, dict):
+        raise Exception(f"检查站点是否存在失败: {(out or '').strip()[:240]}")
+    return bool(parsed.get("exists"))
+
+
+async def _panel_delete_site_by_script(server: Server, domain: str):
+    py_script = (
+        "import os,sys,json\n"
+        "os.chdir('/www/server/panel/')\n"
+        "sys.path.insert(0,'/www/server/panel/')\n"
+        "sys.path.insert(0,'class/')\n"
+        "import public\n"
+        "import panelSite\n"
+        f"domain = {json.dumps(domain)}\n"
+        "site_id = public.M('sites').where('name=?',(domain,)).getField('id')\n"
+        "if not site_id:\n"
+        "    print(json.dumps({'status': True, 'msg': '站点不存在，按幂等继续'}, ensure_ascii=False)); raise SystemExit(0)\n"
+        "args = public.dict_obj()\n"
+        "args.id = str(site_id)\n"
+        "args.webname = domain\n"
+        "args.path = '/www/wwwroot/' + domain\n"
+        "args.ftp = '1'\n"
+        "args.database = '1'\n"
+        "res = panelSite.panelSite().DeleteSite(args)\n"
+        "print(json.dumps(res, ensure_ascii=False))\n"
+    )
+    py_b64 = base64.b64encode(py_script.encode("utf-8")).decode("ascii")
+    remote_py = f"/tmp/autocms_site_delete_{domain.replace('.', '_')}.py"
+    cmd = (
+        "bash -lc 'set -euo pipefail; "
+        "pybin=/www/server/panel/pyenv/bin/python3.7; "
+        "[ -x \"$pybin\" ] || pybin=/www/server/panel/pyenv/bin/python3; "
+        "[ -x \"$pybin\" ] || pybin=python3; "
+        f"printf %s {py_b64} | base64 -d > {shlex.quote(remote_py)}; "
+        f"\"$pybin\" {shlex.quote(remote_py)}; "
+        f"rm -f {shlex.quote(remote_py)}'"
+    )
+    out = await execute_remote_cmd(server.main_ip, int(getattr(server, "ssh_port", 22) or 22), cmd, timeout_sec=120)
+    parsed = None
+    for line in reversed((out or "").splitlines()):
+        text = line.strip()
+        if not text.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(text)
+            break
+        except Exception:
+            continue
+    if not isinstance(parsed, dict):
+        raise Exception(f"面板脚本删站返回异常: {(out or '').strip()[:300]}")
+    status = str(parsed.get("status")).lower()
+    if status not in {"1", "true", "ok", "success"}:
+        raise Exception(str(parsed.get("msg") or "面板脚本删除站点失败"))
+    return parsed
+
+
+async def _apply_https_by_panel_script(server: Server, domain: str):
+    py_script = (
+        "import os,sys,json\n"
+        "os.chdir('/www/server/panel/')\n"
+        "sys.path.insert(0,'/www/server/panel/')\n"
+        "sys.path.insert(0,'class/')\n"
+        "import public\n"
+        "from acme_v2 import acme_v2\n"
+        "import panelSite\n"
+        f"domain = {json.dumps(domain)}\n"
+        "site_id = public.M('sites').where('name=?',(domain,)).getField('id')\n"
+        "if not site_id:\n"
+        "    print(json.dumps({'status': False, 'msg': '宝塔站点不存在'}, ensure_ascii=False)); raise SystemExit(0)\n"
+        "args = public.dict_obj()\n"
+        "args.id = int(site_id)\n"
+        "args.domains = json.dumps([domain])\n"
+        "args.auth_type = 'http'\n"
+        "args.auth_to = str(args.id)\n"
+        "acme = acme_v2()\n"
+        "res = acme.apply_cert_api(args)\n"
+        "if isinstance(res, dict) and res.get('status'):\n"
+        "    if res.get('private_key') and res.get('cert'):\n"
+        "        g = public.dict_obj()\n"
+        "        g.siteName = domain\n"
+        "        g.first_domain = domain\n"
+        "        g.key = res.get('private_key')\n"
+        "        g.csr = (res.get('cert') or '') + (res.get('root') or '')\n"
+        "        set_res = panelSite.panelSite().SetSSL(g)\n"
+        "        if isinstance(set_res, dict) and not set_res.get('status'):\n"
+        "            print(json.dumps(set_res, ensure_ascii=False)); raise SystemExit(0)\n"
+        "print(json.dumps(res, ensure_ascii=False))\n"
+    )
+    py_b64 = base64.b64encode(py_script.encode("utf-8")).decode("ascii")
+    remote_py = f"/tmp/autocms_https_{domain.replace('.', '_')}.py"
+    cmd = (
+        "bash -lc 'set -euo pipefail; "
+        "pybin=/www/server/panel/pyenv/bin/python3.7; "
+        "[ -x \"$pybin\" ] || pybin=/www/server/panel/pyenv/bin/python3; "
+        "[ -x \"$pybin\" ] || pybin=python3; "
+        f"printf %s {py_b64} | base64 -d > {shlex.quote(remote_py)}; "
+        f"\"$pybin\" {shlex.quote(remote_py)}; "
+        f"rm -f {shlex.quote(remote_py)}'"
+    )
+    out = await execute_remote_cmd(server.main_ip, int(getattr(server, "ssh_port", 22) or 22), cmd, timeout_sec=180)
+    parsed = None
+    for line in reversed((out or "").splitlines()):
+        text = line.strip()
+        if not text.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(text)
+            break
+        except Exception:
+            continue
+    if not isinstance(parsed, dict):
+        raise Exception(f"面板脚本返回异常: {(out or '').strip()[:300]}")
+    if not parsed.get("status"):
+        raise Exception(str(parsed.get("msg") or "面板脚本申请证书失败"))
+    return parsed
+
+
+async def _read_https_expire_at_from_remote(server: Server, domain: str):
+    cert_a = shlex.quote(f"/www/server/panel/vhost/cert/{domain}/fullchain.pem")
+    cert_b = shlex.quote(f"/etc/letsencrypt/live/{domain}/fullchain.pem")
+    cmd = (
+        "bash -lc 'set -euo pipefail; "
+        f"for p in {cert_a} {cert_b}; do "
+        "if [ -s \"$p\" ]; then openssl x509 -noout -enddate -in \"$p\" && exit 0; fi; "
+        "done; exit 0'"
+    )
+    out = await execute_remote_cmd(server.main_ip, int(getattr(server, "ssh_port", 22) or 22), cmd, timeout_sec=30)
+    text = (out or "").strip()
+    m = re.search(r"notAfter=(.+)", text)
+    if not m:
+        return None
+    raw = m.group(1).strip()
+    # Common format: "Jun 29 13:08:58 2026 GMT"
+    try:
+        dt = datetime.strptime(raw, "%b %d %H:%M:%S %Y %Z")
+        return dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        pass
+    # Fallback without timezone token
+    try:
+        dt = datetime.strptime(raw.replace(" GMT", ""), "%b %d %H:%M:%S %Y")
+        return dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+async def _verify_https_enabled_remote(server: Server, domain: str) -> bool:
+    conf = shlex.quote(f"/www/server/panel/vhost/nginx/{domain}.conf")
+    cmd = (
+        "bash -lc 'set -euo pipefail; "
+        f"conf={conf}; "
+        "[ -f \"$conf\" ] || exit 0; "
+        "awk \"/ssl_certificate[[:space:]]+/ {print \\$2}\" \"$conf\" | tr -d \";\" | sed -n \"1p\"'"
+    )
+    cert_path = (await execute_remote_cmd(server.main_ip, int(getattr(server, "ssh_port", 22) or 22), cmd, timeout_sec=20)).strip()
+    if not cert_path:
+        return False
+    check_cmd = f"bash -lc 'test -s {shlex.quote(cert_path)} && echo OK || true'"
+    out = await execute_remote_cmd(server.main_ip, int(getattr(server, "ssh_port", 22) or 22), check_cmd, timeout_sec=20)
+    return "OK" in (out or "")
 
 
 def _write_log(db, site_id, stage, message, level="info"):
@@ -324,4 +532,204 @@ def process_template_upload(self, task_log_id, file_path, pkg_type, name, origin
                 os.remove(file_path)
         except Exception:
             pass
+        db.close()
+
+
+@celery_app.task(bind=True)
+def process_batch_enable_https(self, task_log_id, site_ids, force_renew=True):
+    db = SessionLocal()
+    try:
+        update_task_log(db, int(task_log_id), status="running", message="批量HTTPS配置执行中", task_ref=self.request.id)
+        sites = db.query(Site).filter(Site.id.in_(site_ids or [])).all()
+        server_map = {s.id: s for s in db.query(Server).all()}
+        done = 0
+        failed = []
+        for site in sites:
+            server = server_map.get(site.server_id)
+            if not server:
+                failed.append({"site_id": site.id, "domain": site.domain, "reason": "找不到对应服务器"})
+                db.add(SiteDeployLog(site_id=site.id, level="error", stage="https", message="HTTPS配置失败：找不到对应服务器"))
+                db.commit()
+                continue
+            try:
+                bt = BaotaAPI(f"{server.bt_protocol}://{server.main_ip}:{server.bt_port}", server.bt_key)
+                expire_at = None
+                try:
+                    asyncio.run(bt.apply_https_letsencrypt(site.domain, force_renew=bool(force_renew)))
+                    expire_at = asyncio.run(bt.get_https_expire_at(site.domain))
+                except Exception:
+                    # 宝塔外部API在不同版本参数差异大，回退到面板内置脚本入口。
+                    asyncio.run(_apply_https_by_panel_script(server, site.domain))
+                    try:
+                        expire_at = asyncio.run(bt.get_https_expire_at(site.domain))
+                    except Exception:
+                        expire_at = None
+                if not expire_at:
+                    try:
+                        expire_at = asyncio.run(_read_https_expire_at_from_remote(server, site.domain))
+                    except Exception:
+                        expire_at = None
+                enabled_remote = False
+                try:
+                    enabled_remote = asyncio.run(_verify_https_enabled_remote(server, site.domain))
+                except Exception:
+                    enabled_remote = False
+                if not enabled_remote:
+                    raise Exception("HTTPS未在远端配置文件生效")
+                site.https_enabled = True
+                site.https_auto_renew = True
+                site.https_expire_at = expire_at
+                site.https_updated_at = datetime.now(timezone.utc)
+                db.add(
+                    SiteDeployLog(
+                        site_id=site.id,
+                        level="success",
+                        stage="https",
+                        message="HTTPS已配置（Let's Encrypt + 自动续期）",
+                    )
+                )
+                db.commit()
+                done += 1
+            except Exception as exc:
+                # 某些场景（如 Let's Encrypt 频率限制）虽然申请失败，但站点可能已存在可用HTTPS证书。
+                enabled_remote = False
+                try:
+                    enabled_remote = asyncio.run(_verify_https_enabled_remote(server, site.domain))
+                except Exception:
+                    enabled_remote = False
+                if enabled_remote:
+                    expire_at = None
+                    try:
+                        expire_at = asyncio.run(_read_https_expire_at_from_remote(server, site.domain))
+                    except Exception:
+                        expire_at = None
+                    site.https_enabled = True
+                    site.https_auto_renew = True
+                    site.https_expire_at = expire_at
+                    site.https_updated_at = datetime.now(timezone.utc)
+                    db.add(
+                        SiteDeployLog(
+                            site_id=site.id,
+                            level="warning",
+                            stage="https",
+                            message=f"HTTPS申请返回异常，但检测到已生效: {exc}",
+                        )
+                    )
+                    db.commit()
+                    done += 1
+                    continue
+
+                failed.append({"site_id": site.id, "domain": site.domain, "reason": str(exc)})
+                site.https_enabled = False
+                site.https_updated_at = datetime.now(timezone.utc)
+                db.add(SiteDeployLog(site_id=site.id, level="error", stage="https", message=f"HTTPS配置失败: {exc}"))
+                db.commit()
+
+        status = "success" if not failed else ("success" if done > 0 else "failed")
+        update_task_log(
+            db,
+            int(task_log_id),
+            status=status,
+            message=f"批量HTTPS配置完成：成功 {done}，失败 {len(failed)}",
+            detail={"done": done, "failed": failed, "site_ids": site_ids},
+            task_ref=self.request.id,
+        )
+        log_operation(
+            db,
+            action="site.batch_enable_https.done",
+            message=f"批量配置HTTPS完成：成功 {done}，失败 {len(failed)}",
+            detail={"site_ids": site_ids, "done": done, "failed": failed},
+        )
+        return {"done": done, "failed": failed}
+    except Exception as exc:
+        update_task_log(
+            db,
+            int(task_log_id),
+            status="failed",
+            message=f"批量HTTPS配置失败: {exc}",
+            detail={"site_ids": site_ids, "error": str(exc)},
+            task_ref=self.request.id,
+        )
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True)
+def process_batch_delete_sites(self, task_log_id, site_ids, purge_bt=True):
+    db = SessionLocal()
+    try:
+        ids = sorted({int(x) for x in (site_ids or [])})
+        update_task_log(
+            db,
+            int(task_log_id),
+            status="running",
+            message=f"批量删除站点执行中（{len(ids)}）",
+            detail={"site_ids": ids, "purge_bt": bool(purge_bt)},
+            task_ref=self.request.id,
+        )
+        sites = db.query(Site).filter(Site.id.in_(ids)).all()
+        server_map = {s.id: s for s in db.query(Server).all()}
+
+        deleted = 0
+        bt_deleted = 0
+        failed = []
+        for site in sites:
+            try:
+                if purge_bt:
+                    server = server_map.get(site.server_id)
+                    if not server:
+                        raise Exception("找不到对应服务器")
+                    bt = BaotaAPI(f"{server.bt_protocol}://{server.main_ip}:{server.bt_port}", server.bt_key)
+                    try:
+                        asyncio.run(bt.delete_site(site.domain))
+                    except Exception:
+                        # 兼容不同版本面板，HTTP API失败时走面板内置脚本删除。
+                        asyncio.run(_panel_delete_site_by_script(server, site.domain))
+                    still_exists = asyncio.run(_panel_site_exists(server, site.domain))
+                    if still_exists:
+                        # 双保险再尝试一次脚本删除，然后强校验。
+                        asyncio.run(_panel_delete_site_by_script(server, site.domain))
+                        still_exists = asyncio.run(_panel_site_exists(server, site.domain))
+                    if still_exists:
+                        raise Exception("宝塔站点仍存在，未通过远端校验")
+                    bt_deleted += 1
+
+                db.query(SiteDeployLog).filter(SiteDeployLog.site_id == site.id).delete(synchronize_session=False)
+                db.delete(site)
+                db.commit()
+                deleted += 1
+            except Exception as exc:
+                db.rollback()
+                failed.append({"site_id": site.id, "domain": site.domain, "reason": str(exc)})
+                db.add(SiteDeployLog(site_id=site.id, level="error", stage="delete", message=f"删除失败: {exc}"))
+                db.commit()
+
+        status = "success" if not failed else ("success" if deleted > 0 else "failed")
+        update_task_log(
+            db,
+            int(task_log_id),
+            status=status,
+            message=f"批量删除完成：本地成功 {deleted}，失败 {len(failed)}，宝塔成功 {bt_deleted}",
+            detail={"site_ids": ids, "deleted": deleted, "failed": failed, "bt_deleted": bt_deleted, "purge_bt": bool(purge_bt)},
+            task_ref=self.request.id,
+        )
+        log_operation(
+            db,
+            action="site.batch_delete.done",
+            message=f"批量删除站点完成：本地成功 {deleted}，失败 {len(failed)}，宝塔成功 {bt_deleted}",
+            detail={"site_ids": ids, "deleted": deleted, "failed": failed, "bt_deleted": bt_deleted, "purge_bt": bool(purge_bt)},
+        )
+        return {"deleted": deleted, "failed": failed, "bt_deleted": bt_deleted}
+    except Exception as exc:
+        update_task_log(
+            db,
+            int(task_log_id),
+            status="failed",
+            message=f"批量删除站点失败: {exc}",
+            detail={"site_ids": site_ids, "purge_bt": bool(purge_bt), "error": str(exc)},
+            task_ref=self.request.id,
+        )
+        raise
+    finally:
         db.close()

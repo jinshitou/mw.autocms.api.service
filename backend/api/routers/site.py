@@ -10,15 +10,14 @@ from datetime import datetime, timedelta, timezone
 from redis import asyncio as redis_async
 
 from core.database import get_db, SessionLocal
-from core.bt_api_client import BaotaAPI
 from core.ssh_client import execute_remote_cmd
-from worker.deploy_tasks import process_batch_switch_tdk
+from worker.deploy_tasks import process_batch_switch_tdk, process_batch_enable_https, process_batch_delete_sites
 from models.site import Site
 from models.server import Server
 from models.asset import TDKConfig
 from models.site_log import SiteDeployLog
 from services.audit_service import create_task_log, update_task_log, log_operation
-from schemas.site import SitePageResponse, SiteBatchDeleteRequest, SiteBatchSwitchTdkRequest, SiteDeployLogResponse
+from schemas.site import SitePageResponse, SiteBatchDeleteRequest, SiteBatchSwitchTdkRequest, SiteBatchHttpsRequest, SiteDeployLogResponse
 
 router = APIRouter()
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -267,25 +266,31 @@ def delete_site(site_id: int, purge_bt: bool = False, db: Session = Depends(get_
         server = db.query(Server).filter(Server.id == site.server_id).first()
         if not server:
             raise HTTPException(status_code=400, detail="找不到站点对应服务器，无法执行宝塔删除")
-        bt_url = f"{server.bt_protocol}://{server.main_ip}:{server.bt_port}"
-        bt = BaotaAPI(bt_url, server.bt_key)
-        try:
-            asyncio.run(bt.delete_site(site.domain))
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"宝塔删除站点失败: {exc}")
 
-    db.query(SiteDeployLog).filter(SiteDeployLog.site_id == site_id).delete(synchronize_session=False)
-    db.delete(site)
-    db.commit()
+    task_log = create_task_log(
+        db,
+        task_type="delete_site_batch",
+        task_name="删除站点（异步）",
+        message=f"已入队：删除站点 {site.domain}" + ("（含宝塔）" if purge_bt else "（仅本地）"),
+        detail={"site_ids": [site_id], "purge_bt": bool(purge_bt)},
+        status="queued",
+    )
+    task = process_batch_delete_sites.delay(task_log.id, [site_id], bool(purge_bt))
+    update_task_log(db, task_log.id, task_ref=task.id)
     log_operation(
         db,
-        action="site.delete",
-        message=f"删除站点: {site.domain}" + ("（含宝塔）" if purge_bt else "（仅本地）"),
-        detail={"site_id": site_id, "domain": site.domain, "purge_bt": purge_bt},
+        action="site.delete.submit",
+        message=f"提交删除站点任务: {site.domain}" + ("（含宝塔）" if purge_bt else "（仅本地）"),
+        detail={"site_id": site_id, "domain": site.domain, "purge_bt": bool(purge_bt), "task_log_id": task_log.id, "task_id": task.id},
     )
     return {
         "status": "success",
-        "message": "站点删除成功（含宝塔）" if purge_bt else "站点记录已删除"
+        "queued": 1,
+        "missing_ids": [],
+        "purge_bt": bool(purge_bt),
+        "task_log_id": task_log.id,
+        "task_id": task.id,
+        "message": "删除任务已入队，等待异步执行",
     }
 
 
@@ -299,59 +304,39 @@ def batch_delete_sites(payload: SiteBatchDeleteRequest, purge_bt: bool = False, 
     existing_ids = [s.id for s in existing_sites]
     if not existing_sites:
         return {"status": "success", "deleted": 0, "missing_ids": ids}
+    missing_ids = [sid for sid in ids if sid not in set(existing_ids)]
 
-    deletable_ids = list(existing_ids)
-    bt_deleted = 0
-    bt_failed = []
     if purge_bt:
-        server_cache = {}
-        deletable_ids = []
-        for site in existing_sites:
-            server = server_cache.get(site.server_id)
-            if server is None:
-                server = db.query(Server).filter(Server.id == site.server_id).first()
-                server_cache[site.server_id] = server
-            if not server:
-                bt_failed.append({"site_id": site.id, "domain": site.domain, "reason": "找不到对应服务器"})
-                continue
+        server_ids = sorted({s.server_id for s in existing_sites})
+        existing_server_ids = {sid for (sid,) in db.query(Server.id).filter(Server.id.in_(server_ids)).all()}
+        missing_server_sites = [s.domain for s in existing_sites if s.server_id not in existing_server_ids]
+        if missing_server_sites:
+            raise HTTPException(status_code=400, detail=f"以下站点找不到对应服务器，无法执行宝塔删除：{', '.join(missing_server_sites[:5])}")
 
-            bt_url = f"{server.bt_protocol}://{server.main_ip}:{server.bt_port}"
-            bt = BaotaAPI(bt_url, server.bt_key)
-            try:
-                asyncio.run(bt.delete_site(site.domain))
-                bt_deleted += 1
-                deletable_ids.append(site.id)
-            except Exception as exc:
-                bt_failed.append({"site_id": site.id, "domain": site.domain, "reason": str(exc)})
-
-    if not deletable_ids:
-        missing_ids = [sid for sid in ids if sid not in set(existing_ids)]
-        return {
-            "status": "success",
-            "deleted": 0,
-            "missing_ids": missing_ids,
-            "purge_bt": purge_bt,
-            "bt_deleted": bt_deleted,
-            "bt_failed": bt_failed
-        }
-
-    db.query(SiteDeployLog).filter(SiteDeployLog.site_id.in_(deletable_ids)).delete(synchronize_session=False)
-    deleted = db.query(Site).filter(Site.id.in_(deletable_ids)).delete(synchronize_session=False)
-    db.commit()
+    task_log = create_task_log(
+        db,
+        task_type="delete_site_batch",
+        task_name="批量删除站点（异步）",
+        message=f"已入队：批量删除 {len(existing_sites)} 条" + ("（含宝塔）" if purge_bt else "（仅本地）"),
+        detail={"site_ids": existing_ids, "missing_ids": missing_ids, "purge_bt": bool(purge_bt)},
+        status="queued",
+    )
+    task = process_batch_delete_sites.delay(task_log.id, existing_ids, bool(purge_bt))
+    update_task_log(db, task_log.id, task_ref=task.id)
     log_operation(
         db,
-        action="site.batch_delete",
-        message=f"批量删除站点: {deleted} 条" + ("（含宝塔）" if purge_bt else "（仅本地）"),
-        detail={"deleted": deleted, "purge_bt": purge_bt, "bt_deleted": bt_deleted, "bt_failed": bt_failed},
+        action="site.batch_delete.submit",
+        message=f"提交批量删除站点任务: {len(existing_sites)} 条" + ("（含宝塔）" if purge_bt else "（仅本地）"),
+        detail={"site_ids": existing_ids, "missing_ids": missing_ids, "purge_bt": bool(purge_bt), "task_log_id": task_log.id, "task_id": task.id},
     )
-    missing_ids = [sid for sid in ids if sid not in set(existing_ids)]
     return {
         "status": "success",
-        "deleted": deleted,
+        "queued": len(existing_sites),
         "missing_ids": missing_ids,
-        "purge_bt": purge_bt,
-        "bt_deleted": bt_deleted,
-        "bt_failed": bt_failed
+        "purge_bt": bool(purge_bt),
+        "task_log_id": task_log.id,
+        "task_id": task.id,
+        "message": "批量删除任务已入队，等待异步执行",
     }
 
 
@@ -386,6 +371,36 @@ def batch_switch_tdk(payload: SiteBatchSwitchTdkRequest, db: Session = Depends(g
         action="site.batch_switch_tdk.submit",
         message=f"提交批量切换TDK：{len(sites)} 个站点 -> {tdk.name}",
         detail={"site_ids": ids, "tdk_id": tdk.id, "task_log_id": task_log.id, "task_id": task.id},
+    )
+    return {"status": "success", "queued": len(sites), "missing_ids": missing_ids, "task_log_id": task_log.id, "task_id": task.id}
+
+
+@router.post("/batch-enable-https")
+def batch_enable_https(payload: SiteBatchHttpsRequest, db: Session = Depends(get_db)):
+    ids = sorted(set(payload.site_ids or []))
+    if not ids:
+        raise HTTPException(status_code=400, detail="site_ids 不能为空")
+    sites = db.query(Site).filter(Site.id.in_(ids)).all()
+    existing_ids = {s.id for s in sites}
+    missing_ids = [sid for sid in ids if sid not in existing_ids]
+    if not sites:
+        return {"status": "success", "queued": 0, "missing_ids": ids}
+
+    task_log = create_task_log(
+        db,
+        task_type="switch_https_batch",
+        task_name="批量配置HTTPS",
+        message=f"已入队：{len(sites)} 个站点（Let's Encrypt）",
+        detail={"site_ids": ids, "missing_ids": missing_ids, "force_renew": bool(payload.force_renew)},
+        status="queued",
+    )
+    task = process_batch_enable_https.delay(task_log.id, ids, bool(payload.force_renew))
+    update_task_log(db, task_log.id, task_ref=task.id)
+    log_operation(
+        db,
+        action="site.batch_enable_https.submit",
+        message=f"提交批量配置HTTPS：{len(sites)} 个站点",
+        detail={"site_ids": ids, "task_log_id": task_log.id, "task_id": task.id, "force_renew": bool(payload.force_renew)},
     )
     return {"status": "success", "queued": len(sites), "missing_ids": missing_ids, "task_log_id": task_log.id, "task_id": task.id}
 

@@ -18,6 +18,10 @@ class Site(Base):
     admin_path = Column(String, comment="后台路径")
     admin_username = Column(String, nullable=True, comment="后台账号")
     admin_password = Column(String, nullable=True, comment="后台密码（明文展示）")
+    https_enabled = Column(Boolean, default=False, nullable=False, comment="是否启用HTTPS")
+    https_auto_renew = Column(Boolean, default=True, nullable=False, comment="是否自动续期")
+    https_expire_at = Column(DateTime(timezone=True), nullable=True, comment="HTTPS证书过期时间")
+    https_updated_at = Column(DateTime(timezone=True), nullable=True, comment="HTTPS状态更新时间")
     
     status = Column(String, default="deploying", comment="状态: deploying, success, failed")
     error_msg = Column(Text, nullable=True, comment="失败时的错误信息")

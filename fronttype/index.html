@@ -49,8 +49,12 @@
     
     <div class="fixed top-5 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none">
         <transition-group name="toast">
-            <div v-for="msg in toasts" :key="msg.id" :class="['px-4 py-2 rounded shadow-lg text-sm flex items-center', msg.type === 'success' ? 'bg-success text-white' : (msg.type === 'error' ? 'bg-danger text-white' : (msg.type === 'warning' ? 'bg-warning text-black' : 'bg-brand text-white'))]">
-                <i :class="['fa-solid mr-2', msg.type === 'success' ? 'fa-circle-check' : (msg.type === 'error' ? 'fa-circle-exclamation' : (msg.type === 'warning' ? 'fa-triangle-exclamation' : 'fa-spinner fa-spin'))]"></i>
+            <div
+                v-for="msg in toasts"
+                :key="msg.id"
+                :class="toastClass(msg.type)"
+            >
+                <i :class="toastIcon(msg.type)"></i>
                 {{ msg.text }}
             </div>
         </transition-group>
@@ -161,6 +165,9 @@
                         <button v-if="selectedSiteIds.length > 0" @click="openBatchTdkDrawer" class="bg-brand/20 text-brand border border-brand/50 hover:bg-brand/40 px-3 py-1.5 rounded text-xs transition-colors">
                             批量切换TDK ({{ selectedSiteIds.length }})
                         </button>
+                        <button v-if="selectedSiteIds.length > 0" @click="batchEnableHttps" class="bg-emerald-500/20 text-emerald-300 border border-emerald-400/50 hover:bg-emerald-500/35 px-3 py-1.5 rounded text-xs transition-colors">
+                            批量配置HTTPS ({{ selectedSiteIds.length }})
+                        </button>
                         <button @click="cleanupStuckDeployingSites" class="bg-warning/20 text-warning border border-warning/50 hover:bg-warning/40 px-3 py-1.5 rounded text-xs transition-colors">
                             清理超时部署
                         </button>
@@ -177,6 +184,7 @@
                                     <th class="p-3">域名</th>
                                     <th class="p-3">绑定 IP</th>
                                     <th class="p-3">TDK</th>
+                                    <th class="p-3">HTTPS</th>
                                     <th class="p-3">后台凭据</th>
                                     <th class="p-3">部署状态</th>
                                     <th class="p-3">创建时间</th>
@@ -185,11 +193,13 @@
                             </thead>
                             <tbody class="divide-y divide-panelborder">
                                 <tr v-if="sites.length === 0">
-                                    <td colspan="8" class="p-8 text-center text-gray-500">暂无站点数据，去批量上站试试吧</td>
+                                    <td colspan="9" class="p-8 text-center text-gray-500">暂无站点数据，去批量上站试试吧</td>
                                 </tr>
                                 <tr v-for="site in sites" :key="site.id" class="hover:bg-gray-700/50 transition-colors">
                                     <td class="p-3"><input type="checkbox" :checked="selectedSiteIds.includes(site.id)" @change="toggleSelectSite(site.id, $event)" class="rounded bg-darkbg"></td>
-                                    <td class="p-3 font-medium text-brand hover:underline cursor-pointer"><a :href="'http://' + site.domain" target="_blank">{{ site.domain }}</a></td>
+                                    <td class="p-3 font-medium text-brand hover:underline cursor-pointer">
+                                        <a href="#" @click.prevent="openSitePublic(site)">{{ site.domain }}</a>
+                                    </td>
                                     <td class="p-3 text-gray-400 font-mono text-xs">{{ site.bind_ip }}</td>
                                     <td class="p-3 text-gray-300 max-w-[180px]">
                                         <div class="tdk-tooltip-wrap">
@@ -199,6 +209,20 @@
                                                 <div class="mt-1"><span class="text-gray-400">Keywords:</span> {{ site.tdk_keywords || '-' }}</div>
                                                 <div class="mt-1"><span class="text-gray-400">Description:</span> {{ site.tdk_description || '-' }}</div>
                                             </div>
+                                        </div>
+                                    </td>
+                                    <td class="p-3 text-gray-400 text-xs">
+                                        <button
+                                            @click="handleSiteHttpsStatus(site)"
+                                            :class="[
+                                                'text-[11px] px-2.5 py-1 rounded border transition-colors',
+                                                httpsStatusMeta(site).class
+                                            ]"
+                                        >
+                                            {{ httpsStatusMeta(site).label }}
+                                        </button>
+                                        <div v-if="site.https_expire_at" class="text-[10px] text-gray-500 mt-1">
+                                            到期 {{ new Date(site.https_expire_at).toLocaleDateString() }}
                                         </div>
                                     </td>
                                     <td class="p-3 text-gray-400 text-xs">
@@ -218,7 +242,7 @@
                                         <button @click="openSiteLogs(site)" class="text-gray-300 hover:text-white" title="查看日志"><i class="fa-solid fa-file-lines"></i></button>
                                         <button @click="openSingleTdkDrawer(site)" class="text-brand hover:text-white" title="修改TDK"><i class="fa-solid fa-pen-to-square"></i></button>
                                         <button @click="deleteSite(site)" class="text-danger hover:text-red-400" title="删除记录"><i class="fa-solid fa-trash"></i></button>
-                                        <a :href="'http://' + site.domain + '/' + site.admin_path" target="_blank" class="text-gray-400 hover:text-white" title="进入后台"><i class="fa-solid fa-arrow-right-to-bracket"></i></a>
+                                        <a href="#" @click.prevent="openSiteAdmin(site)" class="text-gray-400 hover:text-white" title="进入后台"><i class="fa-solid fa-arrow-right-to-bracket"></i></a>
                                     </td>
                                 </tr>
                             </tbody>
@@ -818,7 +842,47 @@
                 <div class="text-xs text-gray-400 mb-3 break-all">
                     {{ activeLogDetailType === 'operation' ? (activeLogDetail.action || '-') : (activeLogDetail.task_type || '-') }}
                 </div>
+                <div v-if="activeLogDetailType === 'task' && activeLogDetail?.task_type === 'delete_site_batch' && failedDeleteItems.length > 0" class="mb-3 bg-darkbg border border-rose-400/35 rounded p-3">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="text-xs font-bold text-rose-300">删除失败清单（{{ failedDeleteItems.length }}）</div>
+                        <div class="flex items-center gap-2">
+                            <button @click="copyFailedDeleteList" class="text-[11px] px-2 py-1 rounded border border-rose-400/40 text-rose-200 hover:bg-rose-500/20">复制清单</button>
+                            <button @click="retryFailedDeleteItems" class="text-[11px] px-2 py-1 rounded border border-brand/50 text-brand hover:bg-brand/20">重试失败项</button>
+                        </div>
+                    </div>
+                    <div class="space-y-1 max-h-40 overflow-y-auto">
+                        <div v-for="(item, idx) in failedDeleteItems" :key="'failed-del-'+idx" class="text-[11px] text-gray-300">
+                            <span class="text-rose-300">{{ item.domain || '-' }}</span>
+                            <span class="text-gray-500"> · </span>
+                            <span class="break-all">{{ item.reason || '-' }}</span>
+                        </div>
+                    </div>
+                </div>
                 <pre class="text-xs bg-darkbg border border-panelborder rounded p-3 text-gray-300 whitespace-pre-wrap break-all">{{ prettyLogDetail(activeLogDetail.detail) }}</pre>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="uiDialog.visible" class="fixed inset-0 z-[120] flex items-center justify-center px-4">
+        <div class="absolute inset-0 bg-black/65 backdrop-blur-sm" @click="resolveUiDialog('cancel')"></div>
+        <div class="relative w-full max-w-md rounded-xl border border-slate-500/40 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 shadow-2xl p-4">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-bold text-white">{{ uiDialog.title || '操作确认' }}</h3>
+                <button @click="resolveUiDialog('cancel')" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="text-sm text-gray-200 whitespace-pre-line leading-relaxed">{{ uiDialog.message }}</div>
+            <div v-if="uiDialog.mode === 'input'" class="mt-3">
+                <input
+                    v-model="uiDialog.inputValue"
+                    @keyup.enter="resolveUiDialog('ok')"
+                    :placeholder="uiDialog.placeholder || ''"
+                    class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-sm text-gray-100 outline-none focus:border-brand"
+                />
+            </div>
+            <div class="mt-4 flex justify-end gap-2">
+                <button @click="resolveUiDialog('cancel')" class="px-3 py-1.5 rounded border border-panelborder text-gray-300 hover:text-white text-xs">{{ uiDialog.cancelText || '取消' }}</button>
+                <button v-if="uiDialog.mode === 'choice'" @click="resolveUiDialog('alt')" class="px-3 py-1.5 rounded border border-sky-400/50 text-sky-200 hover:bg-sky-500/20 text-xs">{{ uiDialog.altText || '仅本地' }}</button>
+                <button @click="resolveUiDialog('ok')" class="px-3 py-1.5 rounded border border-violet-400/50 text-violet-100 bg-gradient-to-r from-indigo-500/80 to-violet-500/80 hover:from-indigo-500 hover:to-violet-500 text-xs">{{ uiDialog.okText || '确认' }}</button>
             </div>
         </div>
     </div>
@@ -860,11 +924,97 @@
             const apiBaseUrl = ref(API_BASE_URL);
             const apiSourceLabel = ref(API_SOURCE_LABEL);
             const toasts = ref([]);
+            const uiDialog = reactive({
+                visible: false,
+                title: '',
+                message: '',
+                mode: 'confirm',
+                inputValue: '',
+                placeholder: '',
+                okText: '确认',
+                cancelText: '取消',
+                altText: '仅本地',
+                resolver: null,
+            });
+            const TOAST_THEME_MAP = {
+                success: {
+                    className: 'bg-gradient-to-r from-emerald-500/90 to-teal-500/90 border-emerald-300/50 text-white',
+                    icon: 'fa-circle-check',
+                },
+                error: {
+                    className: 'bg-gradient-to-r from-rose-500/90 to-pink-500/90 border-rose-300/50 text-white',
+                    icon: 'fa-circle-exclamation',
+                },
+                warning: {
+                    className: 'bg-gradient-to-r from-amber-400/95 to-orange-500/95 border-amber-200/50 text-black',
+                    icon: 'fa-triangle-exclamation',
+                },
+                info: {
+                    className: 'bg-gradient-to-r from-sky-500/90 to-indigo-500/90 border-sky-300/50 text-white',
+                    icon: 'fa-spinner fa-spin',
+                },
+            };
             
             const showToast = (text, type = 'success') => {
                 const id = Date.now() + Math.random();
                 toasts.value.push({ id, text: String(text), type });
                 setTimeout(() => { toasts.value = toasts.value.filter(t => t.id !== id); }, 5000);
+            };
+            const toastMeta = (type) => TOAST_THEME_MAP[String(type || '').toLowerCase()] || TOAST_THEME_MAP.info;
+            const toastClass = (type) => ['px-4 py-2 rounded-lg border shadow-lg text-sm flex items-center backdrop-blur-sm', toastMeta(type).className];
+            const toastIcon = (type) => ['fa-solid mr-2', toastMeta(type).icon];
+            const openUiDialog = (opts = {}) => new Promise((resolve) => {
+                uiDialog.visible = true;
+                uiDialog.title = String(opts.title || '操作确认');
+                uiDialog.message = String(opts.message || '');
+                uiDialog.mode = String(opts.mode || 'confirm');
+                uiDialog.inputValue = String(opts.defaultValue || '');
+                uiDialog.placeholder = String(opts.placeholder || '');
+                uiDialog.okText = String(opts.okText || '确认');
+                uiDialog.cancelText = String(opts.cancelText || '取消');
+                uiDialog.altText = String(opts.altText || '仅本地');
+                uiDialog.resolver = resolve;
+            });
+            const resolveUiDialog = (action) => {
+                const resolver = uiDialog.resolver;
+                const payload = { action, value: uiDialog.inputValue };
+                uiDialog.visible = false;
+                uiDialog.resolver = null;
+                if (resolver) resolver(payload);
+            };
+            const askConfirm = async (message, opts = {}) => {
+                const ret = await openUiDialog({
+                    mode: 'confirm',
+                    message,
+                    title: opts.title || '请确认',
+                    okText: opts.okText || '确认',
+                    cancelText: opts.cancelText || '取消',
+                });
+                return ret.action === 'ok';
+            };
+            const askInput = async (message, opts = {}) => {
+                const ret = await openUiDialog({
+                    mode: 'input',
+                    message,
+                    title: opts.title || '请输入',
+                    okText: opts.okText || '确定',
+                    cancelText: opts.cancelText || '取消',
+                    defaultValue: opts.defaultValue || '',
+                    placeholder: opts.placeholder || '',
+                });
+                if (ret.action !== 'ok') return null;
+                return String(ret.value || '').trim();
+            };
+            const askChoice = async (message, opts = {}) => {
+                const ret = await openUiDialog({
+                    mode: 'choice',
+                    message,
+                    title: opts.title || '请选择',
+                    okText: opts.okText || '确认',
+                    cancelText: opts.cancelText || '取消',
+                    altText: opts.altText || '次要操作',
+                });
+                return ret.action;
             };
 
             const checkHealth = async () => {
@@ -922,7 +1072,11 @@
                 finally { testingId.value = null; }
             };
             const updateServerSshPort = async (server) => {
-                const input = prompt(`修改服务器 ${server.name} 的 SSH 端口`, String(server.ssh_port || 22));
+                const input = await askInput(`修改服务器 ${server.name} 的 SSH 端口`, {
+                    title: '修改 SSH 端口',
+                    defaultValue: String(server.ssh_port || 22),
+                    placeholder: '请输入 1-65535',
+                });
                 if (input === null) return;
                 const sshPort = Number(input);
                 if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535) return showToast('SSH端口必须是 1-65535 的整数', 'error');
@@ -934,7 +1088,11 @@
                     showToast(e, 'error');
                 }
             };
-            const deleteServer = async (id) => { if(confirm('确定删除?')) { try { await ax.delete(`/servers/${id}`); fetchServers(); } catch(e){} } };
+            const deleteServer = async (id) => {
+                const ok = await askConfirm('确认删除该服务器？', { title: '删除服务器', okText: '删除' });
+                if (!ok) return;
+                try { await ax.delete(`/servers/${id}`); fetchServers(); } catch(e){}
+            };
 
             // ---- TDK 大批量入库引擎 ----
             const tdks = ref([]);
@@ -984,7 +1142,11 @@
                 finally { isSubmittingTdk.value = false; }
             };
 
-            const deleteTdk = async (id) => { if(confirm('确认删除 TDK?')) { try { await ax.delete(`/tdks/${id}`); fetchTdks(); deployForm.selectedTdk = null;} catch(e){} } };
+            const deleteTdk = async (id) => {
+                const ok = await askConfirm('确认删除该 TDK 方案？', { title: '删除 TDK', okText: '删除' });
+                if (!ok) return;
+                try { await ax.delete(`/tdks/${id}`); fetchTdks(); deployForm.selectedTdk = null;} catch(e){}
+            };
 
             // ---- 站点管理 ----
             const sites = ref([]);
@@ -1013,6 +1175,7 @@
             const homeTaskStatusFilter = ref('all');
             const uploadTaskStatusFilter = ref('all');
             const handledTaskStateKeys = new Set();
+            const handledTaskFailureToasts = new Set();
             const showLogDetailDrawer = ref(false);
             const activeLogDetail = ref(null);
             const activeLogDetailType = ref('operation');
@@ -1074,17 +1237,31 @@
             const fetchTaskLogs = async () => {
                 try {
                     taskLogs.value = await ax.get('/logs/tasks?limit=200');
-                    // 任务联动刷新：批量TDK切换任务结束后，自动刷新站点列表
+                    // 任务联动刷新：TDK/HTTPS 批量任务结束后，自动刷新站点列表
                     if (currentTab.value === 'sites') {
                         let needRefreshSites = false;
                         for (const item of (taskLogs.value || [])) {
-                            if (String(item.task_type || '') !== 'switch_tdk_batch') continue;
+                            const taskType = String(item.task_type || '');
+                            if (!['switch_tdk_batch', 'switch_https_batch', 'delete_site_batch'].includes(taskType)) continue;
                             const status = String(item.status || '').toLowerCase();
                             if (!['success', 'failed'].includes(status)) continue;
                             const key = `${item.id}:${status}`;
                             if (!handledTaskStateKeys.has(key)) {
                                 handledTaskStateKeys.add(key);
                                 needRefreshSites = true;
+                            }
+                            if (status === 'failed') {
+                                const failToastKey = `failed-toast:${item.id}`;
+                                if (!handledTaskFailureToasts.has(failToastKey)) {
+                                    handledTaskFailureToasts.add(failToastKey);
+                                    try {
+                                        const detail = typeof item.detail === 'string' ? JSON.parse(item.detail) : (item.detail || {});
+                                        const firstFail = Array.isArray(detail?.failed) && detail.failed.length ? detail.failed[0] : null;
+                                        if (firstFail?.reason) {
+                                            showToast(`任务失败原因：${firstFail.reason}`, 'error');
+                                        }
+                                    } catch (_) {}
+                                }
                             }
                         }
                         if (needRefreshSites) {
@@ -1137,6 +1314,29 @@
                     return String(detail);
                 }
             };
+            const parseTaskDetail = (detail) => {
+                if (!detail) return {};
+                if (typeof detail === 'string') {
+                    try {
+                        return JSON.parse(detail);
+                    } catch (_) {
+                        return {};
+                    }
+                }
+                return detail;
+            };
+            const failedDeleteItems = computed(() => {
+                if (activeLogDetailType.value !== 'task') return [];
+                const taskType = String(activeLogDetail.value?.task_type || '');
+                if (taskType !== 'delete_site_batch') return [];
+                const detail = parseTaskDetail(activeLogDetail.value?.detail);
+                const failed = Array.isArray(detail?.failed) ? detail.failed : [];
+                return failed.map(item => ({
+                    site_id: item?.site_id,
+                    domain: String(item?.domain || ''),
+                    reason: String(item?.reason || ''),
+                }));
+            });
             const toggleSelectSite = (siteId, evt) => {
                 const checked = !!evt?.target?.checked;
                 if (checked) {
@@ -1150,13 +1350,21 @@
                 selectedSiteIds.value = checked ? sites.value.map(s => s.id) : [];
             };
             const deleteSite = async (site) => {
-                const removeBt = confirm('是否同时在宝塔删除站点及所有数据？\n确定=联动删除宝塔；取消=仅删除本地记录。');
-                if (!confirm(removeBt ? '确认执行“本地+宝塔”双重删除？' : '确认仅删除本地记录？')) return;
+                const removeChoice = await askChoice(
+                    '删除站点时是否联动删除宝塔站点及所有数据？',
+                    { title: '删除策略', okText: '本地+宝塔', altText: '仅删本地', cancelText: '取消' }
+                );
+                if (removeChoice === 'cancel') return;
+                const removeBt = removeChoice === 'ok';
+                const finalOk = await askConfirm(
+                    removeBt ? '确认执行“本地 + 宝塔”双重删除？' : '确认仅删除本地记录？',
+                    { title: '最终确认', okText: '确认删除' }
+                );
+                if (!finalOk) return;
                 try {
                     await ax.delete(`/sites/${site.id}?purge_bt=${removeBt ? 'true' : 'false'}`);
-                    selectedSiteIds.value = selectedSiteIds.value.filter(sid => sid !== site.id);
-                    await fetchSites();
-                    showToast(removeBt ? '站点已从本地与宝塔删除' : '站点记录已删除', 'success');
+                    showToast(`删除任务已入队：${site.domain}`, 'success');
+                    await fetchTaskLogs();
                 } catch(e) {
                     showToast(e, 'error');
                 }
@@ -1164,23 +1372,22 @@
             const batchDeleteSites = async () => {
                 const ids = [...selectedSiteIds.value];
                 if (!ids.length) return;
-                const removeBt = confirm('批量删除时，是否同时在宝塔删除站点及所有数据？\n确定=联动删除宝塔；取消=仅删除本地记录。');
-                if (!confirm(removeBt ? `确认批量删除 ${ids.length} 条（本地+宝塔）？` : `确认仅删除本地 ${ids.length} 条记录？`)) return;
+                const removeChoice = await askChoice(
+                    `批量删除 ${ids.length} 条记录时，是否联动删除宝塔站点及数据？`,
+                    { title: '批量删除策略', okText: '本地+宝塔', altText: '仅删本地', cancelText: '取消' }
+                );
+                if (removeChoice === 'cancel') return;
+                const removeBt = removeChoice === 'ok';
+                const finalOk = await askConfirm(
+                    removeBt ? `确认批量删除 ${ids.length} 条（本地+宝塔）？` : `确认仅删除本地 ${ids.length} 条记录？`,
+                    { title: '最终确认', okText: '确认删除' }
+                );
+                if (!finalOk) return;
                 try {
                     const res = await ax.post(`/sites/batch-delete?purge_bt=${removeBt ? 'true' : 'false'}`, { site_ids: ids });
+                    showToast(`批量删除任务已入队：${res.queued || 0} 条`, 'success');
                     selectedSiteIds.value = [];
-                    const btFailCount = (res.bt_failed || []).length;
-                    if (removeBt) {
-                        showToast(`批量删除完成：本地 ${res.deleted || 0} 条，宝塔 ${res.bt_deleted || 0} 条`, btFailCount ? 'warning' : 'success');
-                        if (btFailCount) {
-                            const preview = res.bt_failed.slice(0, 3).map(x => x.domain).join(', ');
-                            showToast(`宝塔删除失败 ${btFailCount} 条：${preview}${btFailCount > 3 ? ' ...' : ''}`, 'warning');
-                        }
-                    } else {
-                        showToast(`批量删除完成：${res.deleted || 0} 条`, 'success');
-                    }
-                    if (sitePage.value > 1 && sites.value.length <= 1) sitePage.value -= 1;
-                    fetchSites();
+                    await fetchTaskLogs();
                 } catch (e) {
                     showToast(e, 'error');
                 }
@@ -1191,6 +1398,115 @@
                 tdkSwitchTargetIds.value = ids;
                 tdkSwitchContextLabel.value = `批量切换 ${ids.length} 个站点`;
                 showTdkSwitchDrawer.value = true;
+            };
+            const batchEnableHttps = async () => {
+                const ids = [...selectedSiteIds.value];
+                if (!ids.length) return;
+                const ok = await askConfirm(`确认批量配置/更新 ${ids.length} 个站点 HTTPS（Let's Encrypt）？`, {
+                    title: '批量 HTTPS',
+                    okText: '提交任务',
+                });
+                if (!ok) return;
+                try {
+                    const res = await ax.post('/sites/batch-enable-https', { site_ids: ids, force_renew: true });
+                    showToast(`HTTPS任务已入队：${res.queued || 0} 条`, 'success');
+                    await fetchTaskLogs();
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const getHttpsDaysLeft = (site) => {
+                if (!site?.https_enabled || !site?.https_expire_at) return null;
+                const expire = new Date(site.https_expire_at);
+                if (Number.isNaN(expire.getTime())) return null;
+                return Math.ceil((expire.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+            };
+            const httpsStatusMeta = (site) => {
+                if (!site?.https_enabled) {
+                    return {
+                        label: '未配置',
+                        class: 'text-amber-300 border-amber-400/50 bg-amber-500/10 hover:bg-amber-500/20',
+                    };
+                }
+                const left = getHttpsDaysLeft(site);
+                if (left === null) {
+                    return {
+                        label: '已启用',
+                        class: 'text-emerald-300 border-emerald-400/50 bg-emerald-500/10 hover:bg-emerald-500/20',
+                    };
+                }
+                if (left < 0) {
+                    return {
+                        label: `已过期 ${Math.abs(left)} 天`,
+                        class: 'text-rose-300 border-rose-400/50 bg-rose-500/10 hover:bg-rose-500/20',
+                    };
+                }
+                if (left <= 7) {
+                    return {
+                        label: `剩余 ${left} 天`,
+                        class: 'text-rose-300 border-rose-400/50 bg-rose-500/10 hover:bg-rose-500/20',
+                    };
+                }
+                if (left <= 20) {
+                    return {
+                        label: `剩余 ${left} 天`,
+                        class: 'text-amber-300 border-amber-400/50 bg-amber-500/10 hover:bg-amber-500/20',
+                    };
+                }
+                return {
+                    label: `剩余 ${left} 天`,
+                    class: 'text-emerald-300 border-emerald-400/50 bg-emerald-500/10 hover:bg-emerald-500/20',
+                };
+            };
+            const sitePublicUrl = (site) => `${site?.https_enabled ? 'https' : 'http'}://${site?.domain || ''}`;
+            const siteAdminUrl = (site) => `${site?.https_enabled ? 'https' : 'http'}://${site?.domain || ''}/${site?.admin_path || ''}`;
+            const hstsHintShownDomains = new Set();
+            const maybeShowHstsHint = (site) => {
+                const domain = String(site?.domain || '');
+                if (!domain || site?.https_enabled || hstsHintShownDomains.has(domain)) return;
+                hstsHintShownDomains.add(domain);
+                showToast('若浏览器因 HSTS 自动跳转到 https（证书错误），请先配置 HTTPS 或清理该域名 HSTS 缓存', 'warning');
+            };
+            const openSitePublic = (site) => {
+                maybeShowHstsHint(site);
+                const url = sitePublicUrl(site);
+                window.open(url, '_blank', 'noopener,noreferrer');
+            };
+            const openSiteAdmin = (site) => {
+                maybeShowHstsHint(site);
+                const url = siteAdminUrl(site);
+                window.open(url, '_blank', 'noopener,noreferrer');
+            };
+            const enableSiteHttps = async (site) => {
+                if (!site?.id) return;
+                try {
+                    const res = await ax.post('/sites/batch-enable-https', { site_ids: [site.id], force_renew: true });
+                    showToast(`HTTPS任务已入队：${res.queued || 1} 条`, 'success');
+                    await fetchTaskLogs();
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const handleSiteHttpsStatus = async (site) => {
+                if (!site?.id) return;
+                if (!site.https_enabled) {
+                    const ok = await askConfirm(`确认立即为 ${site.domain} 配置 HTTPS（Let's Encrypt）？`, {
+                        title: '配置 HTTPS',
+                        okText: '立即配置',
+                    });
+                    if (!ok) return;
+                    await enableSiteHttps(site);
+                    return;
+                }
+                const days = getHttpsDaysLeft(site);
+                const dayText = days === null ? '到期时间未知' : (days >= 0 ? `证书剩余 ${days} 天` : `证书已过期 ${Math.abs(days)} 天`);
+                const ok = await askConfirm(`${dayText}\n是否立即更新该站点 HTTPS 证书？`, {
+                    title: '更新 HTTPS 证书',
+                    okText: '立即更新',
+                    cancelText: '暂不更新',
+                });
+                if (!ok) return;
+                await enableSiteHttps(site);
             };
             const openSingleTdkDrawer = (site) => {
                 if (!site?.id) return;
@@ -1208,7 +1524,11 @@
             const applyTdkToTargets = async (tdk) => {
                 const ids = [...tdkSwitchTargetIds.value];
                 if (!ids.length || !tdk?.id) return;
-                if (!confirm(`确认切换到 TDK：${tdk.name} ？`)) return;
+                const ok = await askConfirm(`确认切换到 TDK：${tdk.name} ？`, {
+                    title: '切换 TDK',
+                    okText: '提交任务',
+                });
+                if (!ok) return;
                 isSwitchingTdk.value = true;
                 try {
                     const res = await ax.post('/sites/batch-switch-tdk', { site_ids: ids, tdk_id: tdk.id });
@@ -1222,7 +1542,11 @@
                 }
             };
             const cleanupStuckDeployingSites = async () => {
-                const input = prompt('输入超时分钟数（默认 60）', '60');
+                const input = await askInput('输入超时分钟数（默认 60）', {
+                    title: '清理超时部署',
+                    defaultValue: '60',
+                    placeholder: '例如：60',
+                });
                 if (input === null) return;
                 const timeoutMinutes = Number(input);
                 if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) return showToast('请输入有效的分钟数', 'error');
@@ -1265,6 +1589,32 @@
                 if (!site?.admin_password) return showToast('当前站点无后台密码', 'error');
                 const ok = await copyText(site.admin_password);
                 showToast(ok ? `已复制 ${site.domain} 后台密码` : '复制后台密码失败，请检查浏览器权限', ok ? 'success' : 'error');
+            };
+            const copyFailedDeleteList = async () => {
+                const lines = failedDeleteItems.value.map((x) => `${x.domain}|${x.reason || '-'}`);
+                if (!lines.length) return showToast('当前没有可复制的失败清单', 'warning');
+                const ok = await copyText(lines.join('\n'));
+                showToast(ok ? `已复制 ${lines.length} 条删除失败记录` : '复制失败清单失败，请检查浏览器权限', ok ? 'success' : 'error');
+            };
+            const retryFailedDeleteItems = async () => {
+                const ids = [...new Set(
+                    failedDeleteItems.value
+                        .map((x) => Number(x.site_id))
+                        .filter((v) => Number.isInteger(v) && v > 0)
+                )];
+                if (!ids.length) return showToast('失败清单缺少可重试的 site_id', 'warning');
+                const ok = await askConfirm(`确认重试删除失败项（${ids.length} 条）？`, {
+                    title: '重试删除失败项',
+                    okText: '提交重试任务',
+                });
+                if (!ok) return;
+                try {
+                    const res = await ax.post('/sites/batch-delete?purge_bt=true', { site_ids: ids });
+                    showToast(`重试任务已入队：${res.queued || ids.length} 条`, 'success');
+                    await fetchTaskLogs();
+                } catch (e) {
+                    showToast(e, 'error');
+                }
             };
             const openSiteLogs = async (site) => {
                 activeLogSite.value = site;
@@ -1495,7 +1845,11 @@
                     isUploading.value = false;
                 }
             };
-            const deleteTemplate = async (id) => { if(confirm('确认删除?')) { try { await ax.delete(`/templates/${id}`); fetchTemplates(); deployForm.selectedCore = null; deployForm.selectedTheme = null;} catch(e){} } };
+            const deleteTemplate = async (id) => {
+                const ok = await askConfirm('确认删除该资源包？', { title: '删除资源包', okText: '删除' });
+                if (!ok) return;
+                try { await ax.delete(`/templates/${id}`); fetchTemplates(); deployForm.selectedCore = null; deployForm.selectedTheme = null;} catch(e){}
+            };
 
             // ---- 批量建站控制台 ----
             const activeDrawer = ref(null);
@@ -1807,9 +2161,9 @@
             });
 
             return {
-                currentTab, apiStatus, apiBaseUrl, apiSourceLabel, toasts, showToast,
-                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, openBatchTdkDrawer, openSingleTdkDrawer, showTdkSwitchDrawer, tdkSwitchContextLabel, closeTdkSwitchDrawer, applyTdkToTargets, cleanupStuckDeployingSites, copySiteAdminUsername, copySiteAdminPassword, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, closeSiteLogsModal, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs, isSiteLogStreaming, serverStatusCards, fetchServerStatusSummary, showServerStatusDrawer, activeServerStatus, openServerStatusDrawer, refreshOneServerStatus,
-                operationLogs, taskLogs, homeLogTab, homeTaskStatusFilter, uploadTaskStatusFilter, fetchOperationLogs, fetchTaskLogs, uploadTaskLogs, filteredUploadTaskLogs, filteredHomeTaskLogs, taskStatusMeta, showLogDetailDrawer, activeLogDetail, activeLogDetailType, openLogDetailDrawer, prettyLogDetail,
+                currentTab, apiStatus, apiBaseUrl, apiSourceLabel, toasts, showToast, toastClass, toastIcon, uiDialog, resolveUiDialog,
+                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, openBatchTdkDrawer, openSingleTdkDrawer, showTdkSwitchDrawer, tdkSwitchContextLabel, closeTdkSwitchDrawer, applyTdkToTargets, batchEnableHttps, enableSiteHttps, handleSiteHttpsStatus, httpsStatusMeta, sitePublicUrl, siteAdminUrl, openSitePublic, openSiteAdmin, cleanupStuckDeployingSites, copySiteAdminUsername, copySiteAdminPassword, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, closeSiteLogsModal, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs, isSiteLogStreaming, serverStatusCards, fetchServerStatusSummary, showServerStatusDrawer, activeServerStatus, openServerStatusDrawer, refreshOneServerStatus,
+                operationLogs, taskLogs, homeLogTab, homeTaskStatusFilter, uploadTaskStatusFilter, fetchOperationLogs, fetchTaskLogs, uploadTaskLogs, filteredUploadTaskLogs, filteredHomeTaskLogs, taskStatusMeta, showLogDetailDrawer, activeLogDetail, activeLogDetailType, openLogDetailDrawer, prettyLogDetail, failedDeleteItems, copyFailedDeleteList, retryFailedDeleteItems,
                 servers, showAddServerModal, addForm, submitAddServer, testServer, updateServerSshPort, deleteServer, testingId,
                 tdks, showAddTdkModal, bulkTdkInput, parsedTdksCount, parseTdkLines, submitBulkTdk, deleteTdk, isSubmittingTdk,
                 templates, showUploadModal, uploadForm, isUploading, submitUpload, fileInput, deleteTemplate, refreshTemplatePage, uploadProgress, uploadedSizeText, totalSizeText, uploadSpeedText, closeUploadModal, cancelUpload, retryLastUpload, uploadRetryLimit, currentUploadAttempt, uploadLastFailed, hasRetryUploadPayload,

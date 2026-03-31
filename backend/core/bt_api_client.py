@@ -2,6 +2,7 @@ import time
 import hashlib
 import httpx
 import json
+from datetime import datetime, timezone
 
 class BaotaAPI:
     def __init__(self, panel_url: str, api_key: str):
@@ -149,3 +150,61 @@ class BaotaAPI:
                     return {"status": True, "msg": "站点不存在，按幂等继续"}
                 continue
         raise Exception(f"宝塔删除站点失败: {last_error}")
+
+    async def apply_https_letsencrypt(self, domain: str, force_renew: bool = True) -> dict:
+        candidates = [
+            ("/acme?action=ApplyCert", {"siteName": domain, "domain": domain, "domains": domain, "auth_type": "http"}),
+            ("/acme?action=apply_cert_api", {"siteName": domain, "domain": domain, "domains": domain, "auth_type": "http"}),
+            ("/site?action=SetSSL", {"siteName": domain, "type": "letsencrypt", "domain": domain}),
+        ]
+        last_error = None
+        for endpoint, data in candidates:
+            try:
+                resp = await self._post(endpoint, data)
+                msg = str(resp.get("msg") if isinstance(resp, dict) else "")
+                if "已存在" in msg and force_renew:
+                    continue
+                await self.enable_https_auto_renew(domain)
+                return resp
+            except Exception as exc:
+                last_error = exc
+                continue
+        raise Exception(f"宝塔配置HTTPS失败: {last_error}")
+
+    async def enable_https_auto_renew(self, domain: str) -> dict:
+        candidates = [
+            ("/acme?action=SetRenew", {"siteName": domain, "domain": domain, "status": "1", "auto": "1"}),
+            ("/acme?action=set_renew_api", {"siteName": domain, "domain": domain, "status": "1", "auto": "1"}),
+        ]
+        for endpoint, data in candidates:
+            try:
+                return await self._post(endpoint, data)
+            except Exception:
+                continue
+        return {"status": True, "msg": "auto renew fallback"}
+
+    async def get_https_expire_at(self, domain: str):
+        candidates = [
+            ("/acme?action=GetCertInfo", {"siteName": domain, "domain": domain}),
+            ("/acme?action=get_cert_info", {"siteName": domain, "domain": domain}),
+        ]
+        for endpoint, data in candidates:
+            try:
+                resp = await self._post(endpoint, data)
+                if not isinstance(resp, dict):
+                    continue
+                for key in ["endtime", "end_time", "not_after", "expire_time", "expiration_time"]:
+                    raw = resp.get(key)
+                    if not raw:
+                        continue
+                    text = str(raw).strip()
+                    if text.isdigit():
+                        return datetime.fromtimestamp(int(text), tz=timezone.utc)
+                    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                        try:
+                            return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+                        except Exception:
+                            pass
+            except Exception:
+                continue
+        return None

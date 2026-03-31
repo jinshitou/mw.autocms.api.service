@@ -35,6 +35,14 @@ def ensure_schema_compatibility():
             statements.append("ALTER TABLE sites ADD COLUMN admin_username VARCHAR")
         if "admin_password" not in site_cols:
             statements.append("ALTER TABLE sites ADD COLUMN admin_password VARCHAR")
+        if "https_enabled" not in site_cols:
+            statements.append("ALTER TABLE sites ADD COLUMN https_enabled BOOLEAN DEFAULT FALSE")
+        if "https_auto_renew" not in site_cols:
+            statements.append("ALTER TABLE sites ADD COLUMN https_auto_renew BOOLEAN DEFAULT TRUE")
+        if "https_expire_at" not in site_cols:
+            statements.append("ALTER TABLE sites ADD COLUMN https_expire_at TIMESTAMP WITH TIME ZONE")
+        if "https_updated_at" not in site_cols:
+            statements.append("ALTER TABLE sites ADD COLUMN https_updated_at TIMESTAMP WITH TIME ZONE")
         if statements:
             with engine.begin() as conn:
                 for stmt in statements:
