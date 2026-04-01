@@ -20,6 +20,8 @@ class Site(Base):
     admin_password = Column(String, nullable=True, comment="后台密码（明文展示）")
     landing_page_id = Column(Integer, nullable=True, comment="已配置落地页ID")
     landing_page_name = Column(String, nullable=True, comment="已配置落地页名称")
+    redirect_enabled = Column(Boolean, default=False, nullable=False, comment="跳转开关")
+    redirect_ip_whitelist = Column(Text, nullable=True, comment="跳转白名单IP规则")
     https_enabled = Column(Boolean, default=False, nullable=False, comment="是否启用HTTPS")
     https_auto_renew = Column(Boolean, default=True, nullable=False, comment="是否自动续期")
     https_expire_at = Column(DateTime(timezone=True), nullable=True, comment="HTTPS证书过期时间")

@@ -101,6 +101,9 @@
                 <button @click="currentTab = 'landing_pages'" :class="['w-full px-3 py-2 rounded-lg flex items-center transition-colors text-sm', currentTab === 'landing_pages' ? 'bg-brand/10 text-brand font-bold' : 'text-gray-400 hover:bg-panelborder hover:text-white']">
                     <i class="fa-solid fa-file-code w-6 text-center"></i><span class="ml-2">落地页管理</span>
                 </button>
+                <button @click="currentTab = 'plugins'" :class="['w-full px-3 py-2 rounded-lg flex items-center transition-colors text-sm', currentTab === 'plugins' ? 'bg-brand/10 text-brand font-bold' : 'text-gray-400 hover:bg-panelborder hover:text-white']">
+                    <i class="fa-solid fa-puzzle-piece w-6 text-center"></i><span class="ml-2">插件管理</span>
+                </button>
 
                 <div class="text-xs font-bold text-gray-500 mb-2 uppercase px-3 mt-6">生产控制台</div>
                 <button @click="currentTab = 'bulk_deploy'" :class="['w-full px-3 py-2 rounded-lg flex items-center transition-colors text-sm', currentTab === 'bulk_deploy' ? 'bg-brand/10 text-brand font-bold' : 'text-gray-400 hover:bg-panelborder hover:text-white']">
@@ -201,20 +204,8 @@
                 <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg overflow-hidden flex-1 flex flex-col">
                     <div class="p-3 border-b border-panelborder bg-darkbg/50 flex gap-2">
                         <span class="text-xs text-gray-500 self-center">共 {{ siteTotal }} 条，当前第 {{ sitePage }} / {{ siteTotalPages || 1 }} 页</span>
-                        <button v-if="selectedSiteIds.length > 0" @click="openBatchTdkDrawer" class="bg-brand/20 text-brand border border-brand/50 hover:bg-brand/40 px-3 py-1.5 rounded text-xs transition-colors">
-                            批量切换TDK ({{ selectedSiteIds.length }})
-                        </button>
-                        <button v-if="selectedSiteIds.length > 0" @click="openBatchLandingDrawer" class="bg-cyan-500/20 text-cyan-300 border border-cyan-400/50 hover:bg-cyan-500/35 px-3 py-1.5 rounded text-xs transition-colors">
-                            批量配置落地页 ({{ selectedSiteIds.length }})
-                        </button>
-                        <button v-if="selectedSiteIds.length > 0" @click="batchEnableHttps" class="bg-emerald-500/20 text-emerald-300 border border-emerald-400/50 hover:bg-emerald-500/35 px-3 py-1.5 rounded text-xs transition-colors">
-                            批量配置HTTPS ({{ selectedSiteIds.length }})
-                        </button>
-                        <button @click="cleanupStuckDeployingSites" class="bg-warning/20 text-warning border border-warning/50 hover:bg-warning/40 px-3 py-1.5 rounded text-xs transition-colors">
-                            清理超时部署
-                        </button>
-                        <button @click="batchDeleteSites" :disabled="selectedSiteIds.length === 0" class="bg-danger/20 text-danger border border-danger/50 hover:bg-danger/40 px-3 py-1.5 rounded text-xs ml-auto transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-                            批量删除 ({{ selectedSiteIds.length }})
+                        <button @click="openSiteBatchActionDrawer" class="bg-brand/20 text-brand border border-brand/50 hover:bg-brand/40 px-3 py-1.5 rounded text-xs transition-colors ml-auto">
+                            批量操作 {{ selectedSiteIds.length > 0 ? `(${selectedSiteIds.length})` : '' }}
                         </button>
                     </div>
                     
@@ -255,8 +246,33 @@
                                         </div>
                                     </td>
                                     <td class="p-3 text-gray-300 text-xs">
-                                        <span v-if="site.landing_page_name" class="px-2 py-0.5 rounded border border-cyan-400/40 text-cyan-200 bg-cyan-500/10">{{ site.landing_page_name }}</span>
-                                        <span v-else class="text-gray-500">-</span>
+                                        <div class="flex items-center gap-2">
+                                            <button
+                                                @click="openSingleLandingDrawer(site)"
+                                                :class="[
+                                                    'text-[11px] px-2 py-0.5 rounded border transition-colors',
+                                                    site.landing_page_name
+                                                        ? 'border-cyan-400/40 text-cyan-200 bg-cyan-500/10 hover:bg-cyan-500/20'
+                                                        : 'border-slate-400/50 text-slate-300 bg-slate-500/10 hover:bg-slate-500/20'
+                                                ]"
+                                            >
+                                                {{ site.landing_page_name || '未配置落地页' }}
+                                            </button>
+                                            <button
+                                                @click="handleSitePluginStatusClick(site)"
+                                                :class="[
+                                                    'text-[11px] px-2 py-0.5 rounded border transition-colors',
+                                                    site.redirect_enabled
+                                                        ? 'text-fuchsia-200 border-fuchsia-400/50 bg-fuchsia-500/15 hover:bg-fuchsia-500/25'
+                                                        : 'text-slate-300 border-slate-400/50 bg-slate-500/10 hover:bg-slate-500/20'
+                                                ]"
+                                                :title="'点击管理站点插件'"
+                                            >
+                                                <span v-if="site.redirect_enabled && site.plugin_version">{{ site.plugin_name || '跳转插件' }} v{{ site.plugin_version }}</span>
+                                                <span v-else-if="site.redirect_enabled" class="text-amber-300">插件未下发（待同步）</span>
+                                                <span v-else>跳转关闭</span>
+                                            </button>
+                                        </div>
                                     </td>
                                     <td class="p-3 text-gray-400 text-xs">
                                         <button
@@ -288,7 +304,6 @@
                                     <td class="p-3 text-right pr-4 space-x-3">
                                         <button @click="openSiteLogs(site)" class="text-gray-300 hover:text-white" title="查看日志"><i class="fa-solid fa-file-lines"></i></button>
                                         <button @click="openSingleTdkDrawer(site)" class="text-brand hover:text-white" title="修改TDK"><i class="fa-solid fa-pen-to-square"></i></button>
-                                        <button @click="openSingleLandingDrawer(site)" class="text-cyan-300 hover:text-white" title="配置落地页"><i class="fa-solid fa-file-code"></i></button>
                                         <button @click="deleteSite(site)" class="text-danger hover:text-red-400" title="删除记录"><i class="fa-solid fa-trash"></i></button>
                                         <a href="#" @click.prevent="openSiteAdmin(site)" class="text-gray-400 hover:text-white" title="进入后台"><i class="fa-solid fa-arrow-right-to-bracket"></i></a>
                                     </td>
@@ -499,6 +514,73 @@
                             <div class="flex-1 overflow-y-auto p-3 space-y-2">
                                 <div v-if="filteredLandingTaskLogs.length === 0" class="text-xs text-gray-500 py-6 text-center">当前筛选下暂无落地页任务</div>
                                 <div v-for="item in filteredLandingTaskLogs" :key="'landing-task-'+item.id" class="bg-darkbg/60 border border-panelborder rounded p-3">
+                                    <div class="text-sm text-gray-200">{{ item.task_name }}</div>
+                                    <div class="text-sm mt-1" :class="taskStatusMeta(item.status).class">
+                                        {{ taskStatusMeta(item.status).emoji }} {{ taskStatusMeta(item.status).label }} · {{ item.message || '-' }}
+                                    </div>
+                                    <div class="text-xs text-gray-500 mt-1">{{ new Date(item.created_at).toLocaleString() }}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div v-show="currentTab === 'plugins'" class="h-full flex flex-col w-full max-w-[1600px] mx-auto">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold text-white">🧩 插件管理（跳转插件）</h2>
+                    <div class="flex gap-2">
+                        <button @click="fetchPlugins" class="bg-panelborder hover:bg-gray-600 text-white px-4 py-2 rounded text-sm shadow"><i class="fa-solid fa-rotate-right mr-1"></i> 刷新列表</button>
+                        <button v-if="plugins.length === 0" @click="openPluginUploadModal" class="bg-brand hover:bg-brand/80 text-white px-4 py-2 rounded text-sm font-bold shadow">上传插件</button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-12 gap-4 flex-1 min-h-0">
+                    <div class="col-span-8 min-h-0">
+                        <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg overflow-hidden h-full">
+                            <table class="w-full text-left text-sm text-gray-300">
+                                <thead class="bg-gray-800/50 text-xs text-gray-400 border-b border-panelborder">
+                                    <tr>
+                                        <th class="px-6 py-4">名称</th>
+                                        <th class="px-6 py-4">版本</th>
+                                        <th class="px-6 py-4">归属用户</th>
+                                        <th class="px-6 py-4">时间</th>
+                                        <th class="px-6 py-4 text-right">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-if="plugins.length === 0">
+                                        <td colspan="5" class="px-6 py-10 text-center text-gray-500">暂无插件数据</td>
+                                    </tr>
+                                    <tr v-for="item in plugins" :key="'plugin-'+item.id" class="border-b border-panelborder hover:bg-gray-700/20">
+                                        <td class="px-6 py-4 font-bold text-white">{{ item.name }}</td>
+                                        <td class="px-6 py-4 text-fuchsia-300 font-mono">v{{ item.current_version }}</td>
+                                        <td class="px-6 py-4 text-gray-400">{{ item.owner_username || '-' }}</td>
+                                        <td class="px-6 py-4 text-gray-500 text-xs">{{ new Date(item.updated_at || item.created_at).toLocaleString() }}</td>
+                                        <td class="px-6 py-4 text-right space-x-2">
+                                            <button @click="openPluginEditor(item)" class="text-xs text-brand hover:underline">查看/修改</button>
+                                            <button @click="openPluginVersions(item)" class="text-xs text-cyan-300 hover:underline">版本历史</button>
+                                            <button @click="openPluginSites(item)" class="text-xs text-emerald-300 hover:underline">部署站点</button>
+                                            <button @click="openPluginRedeploy(item)" class="text-xs text-warning hover:underline">重新部署</button>
+                                            <button @click="deletePlugin(item)" class="text-xs text-danger hover:underline">删除</button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="col-span-4 min-h-0">
+                        <div class="bg-panelbg border border-panelborder rounded-xl shadow-lg h-full flex flex-col overflow-hidden">
+                            <div class="px-4 py-3 border-b border-panelborder text-sm font-bold text-gray-200">插件任务日志（自动刷新）</div>
+                            <div class="px-3 py-2 border-b border-panelborder flex flex-wrap gap-2">
+                                <button @click="pluginTaskStatusFilter = 'all'" :class="['text-xs px-2 py-1 rounded border', pluginTaskStatusFilter === 'all' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">全部</button>
+                                <button @click="pluginTaskStatusFilter = 'queued'" :class="['text-xs px-2 py-1 rounded border', pluginTaskStatusFilter === 'queued' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">排队中</button>
+                                <button @click="pluginTaskStatusFilter = 'running'" :class="['text-xs px-2 py-1 rounded border', pluginTaskStatusFilter === 'running' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">执行中</button>
+                                <button @click="pluginTaskStatusFilter = 'success'" :class="['text-xs px-2 py-1 rounded border', pluginTaskStatusFilter === 'success' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">成功</button>
+                                <button @click="pluginTaskStatusFilter = 'failed'" :class="['text-xs px-2 py-1 rounded border', pluginTaskStatusFilter === 'failed' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">失败</button>
+                            </div>
+                            <div class="flex-1 overflow-y-auto p-3 space-y-2">
+                                <div v-if="filteredPluginTaskLogs.length === 0" class="text-xs text-gray-500 py-6 text-center">当前筛选下暂无插件任务</div>
+                                <div v-for="item in filteredPluginTaskLogs" :key="'plugin-task-'+item.id" class="bg-darkbg/60 border border-panelborder rounded p-3">
                                     <div class="text-sm text-gray-200">{{ item.task_name }}</div>
                                     <div class="text-sm mt-1" :class="taskStatusMeta(item.status).class">
                                         {{ taskStatusMeta(item.status).emoji }} {{ taskStatusMeta(item.status).label }} · {{ item.message || '-' }}
@@ -1065,10 +1147,263 @@
                     class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-sm text-gray-100 outline-none focus:border-brand"
                 />
             </div>
+            <div v-else-if="uiDialog.mode === 'textarea'" class="mt-3">
+                <textarea
+                    v-model="uiDialog.inputValue"
+                    :placeholder="uiDialog.placeholder || ''"
+                    rows="8"
+                    class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-sm text-gray-100 outline-none focus:border-brand resize-y"
+                ></textarea>
+            </div>
+            <div v-else-if="uiDialog.mode === 'select'" class="mt-3">
+                <select
+                    v-model="uiDialog.inputValue"
+                    class="w-full bg-darkbg border border-panelborder rounded px-3 py-2 text-sm text-gray-100 outline-none focus:border-brand"
+                >
+                    <option v-for="opt in uiDialog.selectOptions" :key="'ui-opt-'+opt.value" :value="opt.value">
+                        {{ opt.label }}
+                    </option>
+                </select>
+            </div>
             <div class="mt-4 flex justify-end gap-2">
                 <button @click="resolveUiDialog('cancel')" class="px-3 py-1.5 rounded border border-panelborder text-gray-300 hover:text-white text-xs">{{ uiDialog.cancelText || '取消' }}</button>
                 <button v-if="uiDialog.mode === 'choice'" @click="resolveUiDialog('alt')" class="px-3 py-1.5 rounded border border-sky-400/50 text-sky-200 hover:bg-sky-500/20 text-xs">{{ uiDialog.altText || '仅本地' }}</button>
                 <button @click="resolveUiDialog('ok')" class="px-3 py-1.5 rounded border border-violet-400/50 text-violet-100 bg-gradient-to-r from-indigo-500/80 to-violet-500/80 hover:from-indigo-500 hover:to-violet-500 text-xs">{{ uiDialog.okText || '确认' }}</button>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="isApplyingRedirect" class="fixed inset-0 z-[125] flex items-center justify-center bg-black/55 backdrop-blur-[1px]">
+        <div class="px-5 py-4 rounded-xl border border-fuchsia-400/40 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 shadow-2xl min-w-[280px]">
+            <div class="flex items-center gap-3 text-fuchsia-100">
+                <i class="fa-solid fa-spinner fa-spin"></i>
+                <span class="text-sm font-semibold">{{ redirectApplyingText || '正在同步跳转开关...' }}</span>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="showPluginEditorDrawer" class="fixed inset-0 z-[115] flex">
+        <div class="flex-1 bg-black/60" @click="closePluginEditor"></div>
+        <div class="w-[70vw] min-w-[760px] max-w-[1280px] bg-panelbg border-l border-panelborder p-5 overflow-y-auto">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-white font-bold">插件配置编辑</h3>
+                <button @click="closePluginEditor" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-400">插件名称</label>
+                    <input v-model="pluginEditorForm.name" class="w-full mt-1 bg-darkbg border border-panelborder rounded px-3 py-2 text-sm" />
+                </div>
+                <div>
+                    <label class="text-xs text-gray-400">归属用户</label>
+                    <input v-model="pluginEditorForm.owner_username" class="w-full mt-1 bg-darkbg border border-panelborder rounded px-3 py-2 text-sm" />
+                </div>
+                <div>
+                    <label class="text-xs text-gray-400">IP 白名单（每行一条）</label>
+                    <textarea v-model="pluginEditorForm.ip_whitelist" rows="8" class="w-full mt-1 bg-darkbg border border-panelborder rounded px-3 py-2 text-sm"></textarea>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-xs text-gray-400">版本号</label>
+                        <input v-model="pluginEditorForm.version" class="w-full mt-1 bg-darkbg border border-panelborder rounded px-3 py-2 text-sm font-mono" />
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-400">更新人</label>
+                        <input v-model="pluginEditorForm.created_by" class="w-full mt-1 bg-darkbg border border-panelborder rounded px-3 py-2 text-sm" />
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-400">更新内容（必填）</label>
+                    <textarea v-model="pluginEditorForm.change_log" rows="3" class="w-full mt-1 bg-darkbg border border-panelborder rounded px-3 py-2 text-sm"></textarea>
+                </div>
+                <div>
+                    <div class="flex items-center justify-between">
+                        <label class="text-xs text-gray-400">系统模板代码（只读）</label>
+                        <button @click="copyPluginTemplateCode" class="text-[11px] px-2 py-0.5 rounded border border-panelborder text-gray-300 hover:text-white">一键复制</button>
+                    </div>
+                    <pre class="mt-1 text-[11px] bg-darkbg border border-panelborder rounded p-2 max-h-[520px] overflow-auto text-gray-300">{{ pluginTemplateCode || '-' }}</pre>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-400">上传 PHP（自动语法检查）</label>
+                    <div
+                        class="mt-1 border border-dashed border-panelborder rounded p-3 text-xs text-gray-400 bg-darkbg/60"
+                        :class="isPluginPhpDragOver ? 'border-brand bg-brand/10' : ''"
+                        @dragover.prevent="isPluginPhpDragOver = true"
+                        @dragleave.prevent="isPluginPhpDragOver = false"
+                        @drop.prevent="onPluginPhpDrop"
+                    >
+                        <div>拖入 `.php` 文件到此处，或点击选择文件</div>
+                        <input ref="pluginPhpFileInput" type="file" accept=".php,text/x-php" class="mt-2 text-xs" @change="onPluginPhpFileChange" />
+                        <div class="mt-2" v-if="pluginPhpUploadFile">已选择：{{ pluginPhpUploadFile.name }}</div>
+                        <div v-if="pluginPhpPreview" class="mt-2">
+                            <div class="text-[11px] text-gray-500 mb-1">代码预览（前20行）</div>
+                            <pre class="text-[11px] bg-black/30 border border-panelborder rounded p-2 max-h-52 overflow-auto text-gray-300">{{ pluginPhpPreview }}</pre>
+                        </div>
+                        <div class="mt-2 flex items-center gap-2">
+                            <button @click="submitPluginPhpUpload" :disabled="!pluginPhpUploadFile" class="px-3 py-1 rounded border border-brand/60 text-brand disabled:opacity-40 disabled:cursor-not-allowed">上传并更新代码</button>
+                            <button @click="clearPluginPhpSelection" :disabled="!pluginPhpUploadFile" class="px-3 py-1 rounded border border-panelborder text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed">清空已选</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2">
+                    <button @click="closePluginEditor" class="px-3 py-1.5 rounded border border-panelborder text-xs text-gray-300">取消</button>
+                    <button @click="savePluginEditor" class="px-3 py-1.5 rounded border border-brand/60 text-xs text-brand bg-brand/10">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="showPluginSitesDrawer" class="fixed inset-0 z-[114] flex">
+        <div class="flex-1 bg-black/60" @click="showPluginSitesDrawer = false"></div>
+        <div class="w-[720px] bg-panelbg border-l border-panelborder p-5 overflow-y-auto">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-white font-bold">插件部署站点</h3>
+                <button @click="showPluginSitesDrawer = false" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="flex gap-2 mb-3">
+                <select v-model="pluginSitesFilter.server_id" class="bg-darkbg border border-panelborder rounded px-2 py-1.5 text-xs">
+                    <option value="">全部服务器</option>
+                    <option v-for="s in servers" :key="'plugin-srv-'+s.id" :value="s.id">{{ s.name }}</option>
+                </select>
+                <select v-model="pluginSitesFilter.version" class="bg-darkbg border border-panelborder rounded px-2 py-1.5 text-xs">
+                    <option value="">全部版本</option>
+                    <option v-for="ver in pluginVersionOptions" :key="'plugin-sites-ver-'+ver" :value="ver">v{{ ver }}</option>
+                </select>
+                <button @click="fetchPluginSites" class="text-xs px-3 py-1.5 rounded border border-panelborder hover:border-brand">筛选</button>
+            </div>
+            <div class="space-y-2">
+                <div v-for="it in pluginSitesPage.items" :key="'plugin-site-'+it.site_id" class="bg-darkbg border border-panelborder rounded p-2 text-xs">
+                    <div class="text-gray-200">{{ it.domain }} · {{ it.server_name || '-' }} ({{ it.server_ip || '-' }})</div>
+                    <div class="text-fuchsia-300 mt-1">版本 v{{ it.plugin_version }} · {{ it.enabled ? '启用' : '关闭' }} · {{ it.status }}</div>
+                    <div class="text-gray-500 mt-1">{{ it.error_msg || '-' }}</div>
+                </div>
+                <div v-if="!pluginSitesPage.items.length" class="text-xs text-gray-500 text-center py-6">暂无站点</div>
+            </div>
+            <div class="flex justify-end items-center gap-2 mt-3">
+                <button @click="changePluginSitesPage(pluginSitesPage.page - 1)" :disabled="pluginSitesPage.page <= 1" class="px-3 py-1 rounded border border-panelborder text-xs disabled:opacity-40">上一页</button>
+                <span class="text-xs text-gray-500">{{ pluginSitesPage.page }} / {{ pluginSitesPage.total_pages || 1 }}</span>
+                <button @click="changePluginSitesPage(pluginSitesPage.page + 1)" :disabled="pluginSitesPage.page >= pluginSitesPage.total_pages" class="px-3 py-1 rounded border border-panelborder text-xs disabled:opacity-40">下一页</button>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="showPluginRedeployDrawer" class="fixed inset-0 z-[113] flex">
+        <div class="flex-1 bg-black/60" @click="showPluginRedeployDrawer = false"></div>
+        <div class="w-[760px] bg-panelbg border-l border-panelborder p-5 overflow-y-auto">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-white font-bold">插件重新部署</h3>
+                <button @click="showPluginRedeployDrawer = false" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="text-xs text-gray-400 mb-3">{{ activePlugin?.name || '-' }} · 当前版本 v{{ activePlugin?.current_version || '-' }}</div>
+            <div class="flex items-center gap-2 mb-3">
+                <button @click="pluginRedeployMode = 'all_sites'" :class="['text-xs px-2 py-1 rounded border', pluginRedeployMode === 'all_sites' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">全部站点</button>
+                <button @click="pluginRedeployMode = 'single_server'" :class="['text-xs px-2 py-1 rounded border', pluginRedeployMode === 'single_server' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">单个服务器</button>
+                <button @click="pluginRedeployMode = 'single_site'" :class="['text-xs px-2 py-1 rounded border', pluginRedeployMode === 'single_site' ? 'border-brand text-brand bg-brand/10' : 'border-panelborder text-gray-400']">选择站点(多选)</button>
+                <select v-model="pluginRedeployVersion" class="ml-auto bg-darkbg border border-panelborder rounded px-2 py-1.5 text-xs w-48 font-mono">
+                    <option value="">默认当前版本</option>
+                    <option v-for="ver in pluginVersionOptions" :key="'plugin-redeploy-ver-'+ver" :value="ver">v{{ ver }}</option>
+                </select>
+            </div>
+            <div class="flex gap-2 mb-3">
+                <select v-model="pluginSitesFilter.server_id" class="bg-darkbg border border-panelborder rounded px-2 py-1.5 text-xs">
+                    <option value="">全部服务器</option>
+                    <option v-for="s in servers" :key="'plugin-redeploy-srv-filter-'+s.id" :value="s.id">{{ s.name }}</option>
+                </select>
+                <select v-model="pluginSitesFilter.version" class="bg-darkbg border border-panelborder rounded px-2 py-1.5 text-xs">
+                    <option value="">全部版本</option>
+                    <option v-for="ver in pluginVersionOptions" :key="'plugin-redeploy-filter-ver-'+ver" :value="ver">v{{ ver }}</option>
+                </select>
+                <button @click="pluginSitesPage.page = 1; fetchPluginSites()" class="text-xs px-3 py-1.5 rounded border border-panelborder hover:border-brand">筛选</button>
+                <select v-if="pluginRedeployMode === 'single_server'" v-model="pluginRedeploySelectedServerId" class="ml-auto bg-darkbg border border-panelborder rounded px-2 py-1.5 text-xs">
+                    <option value="">选择部署服务器</option>
+                    <option v-for="s in servers" :key="'plugin-redeploy-srv-'+s.id" :value="s.id">{{ s.name }} ({{ s.main_ip }})</option>
+                </select>
+            </div>
+            <div class="mb-2" v-if="pluginRedeployMode === 'single_site'">
+                <label class="text-xs text-gray-400 inline-flex items-center gap-2">
+                    <input type="checkbox" @change="togglePluginRedeployCurrentPage($event)" class="rounded bg-darkbg"> 全选当前页
+                </label>
+                <span class="text-xs text-gray-500 ml-2">已选 {{ pluginRedeploySelectedSiteIds.length }} 个站点</span>
+            </div>
+            <div class="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                <div v-for="it in pluginSitesPage.items" :key="'plugin-redeploy-site-'+it.site_id" class="bg-darkbg border border-panelborder rounded p-2 text-xs flex items-start gap-2">
+                    <input v-if="pluginRedeployMode === 'single_site'" type="checkbox" :checked="pluginRedeploySelectedSiteIds.includes(it.site_id)" @change="togglePluginRedeploySite(it.site_id, $event)" class="mt-0.5 rounded bg-darkbg" />
+                    <div class="flex-1">
+                        <div class="text-gray-200">{{ it.domain }} · {{ it.server_name || '-' }} ({{ it.server_ip || '-' }})</div>
+                        <div class="text-fuchsia-300 mt-1">版本 v{{ it.plugin_version }} · {{ it.enabled ? '启用' : '关闭' }} · {{ it.status }}</div>
+                    </div>
+                </div>
+                <div v-if="!pluginSitesPage.items.length" class="text-xs text-gray-500 text-center py-6">当前筛选下暂无站点</div>
+            </div>
+            <div class="flex justify-between items-center gap-2 mt-3">
+                <div class="flex items-center gap-2">
+                    <button @click="changePluginSitesPage(pluginSitesPage.page - 1)" :disabled="pluginSitesPage.page <= 1" class="px-3 py-1 rounded border border-panelborder text-xs disabled:opacity-40">上一页</button>
+                    <span class="text-xs text-gray-500">{{ pluginSitesPage.page }} / {{ pluginSitesPage.total_pages || 1 }}</span>
+                    <button @click="changePluginSitesPage(pluginSitesPage.page + 1)" :disabled="pluginSitesPage.page >= pluginSitesPage.total_pages" class="px-3 py-1 rounded border border-panelborder text-xs disabled:opacity-40">下一页</button>
+                </div>
+                <button @click="submitPluginRedeploy" class="px-3 py-1.5 rounded border border-warning/60 text-warning bg-warning/10 text-xs">提交重部署任务</button>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="showSiteBatchActionDrawer" class="fixed inset-0 z-[110] flex">
+        <div class="flex-1 bg-black/60" @click="showSiteBatchActionDrawer = false"></div>
+        <div class="w-[420px] bg-panelbg border-l border-panelborder p-5 overflow-y-auto">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-white font-bold">批量操作</h3>
+                <button @click="showSiteBatchActionDrawer = false" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="text-xs text-gray-400 mb-4">当前选择站点数：{{ selectedSiteIds.length }}</div>
+            <div class="space-y-3">
+                <div>
+                    <div class="text-[11px] uppercase tracking-wide text-gray-500 mb-2">常规操作</div>
+                    <div class="space-y-2">
+                        <button @click="showSiteBatchActionDrawer = false; openBatchTdkDrawer()" :disabled="selectedSiteIds.length===0" class="w-full text-left px-3 py-2 rounded border border-panelborder hover:border-brand disabled:opacity-40">批量切换TDK</button>
+                        <button @click="showSiteBatchActionDrawer = false; openBatchLandingDrawer()" :disabled="selectedSiteIds.length===0" class="w-full text-left px-3 py-2 rounded border border-panelborder hover:border-brand disabled:opacity-40">批量配置落地页</button>
+                        <button @click="showSiteBatchActionDrawer = false; batchEnableHttps()" :disabled="selectedSiteIds.length===0" class="w-full text-left px-3 py-2 rounded border border-panelborder hover:border-brand disabled:opacity-40">批量配置HTTPS</button>
+                    </div>
+                </div>
+                <div class="h-px bg-panelborder/60"></div>
+                <div>
+                    <div class="text-[11px] uppercase tracking-wide text-gray-500 mb-2">插件操作</div>
+                    <div class="space-y-2">
+                        <button @click="showSiteBatchActionDrawer = false; batchEnableRedirect()" :disabled="selectedSiteIds.length===0" class="w-full text-left px-3 py-2 rounded border border-panelborder hover:border-brand disabled:opacity-40">批量开启跳转</button>
+                        <button @click="showSiteBatchActionDrawer = false; batchDisableRedirect()" :disabled="selectedSiteIds.length===0" class="w-full text-left px-3 py-2 rounded border border-panelborder hover:border-brand disabled:opacity-40">批量关闭跳转</button>
+                        <button @click="showSiteBatchActionDrawer = false; openBatchSitePluginSelectDrawer()" :disabled="selectedSiteIds.length===0" class="w-full text-left px-3 py-2 rounded border border-panelborder hover:border-brand disabled:opacity-40">批量修改插件</button>
+                    </div>
+                </div>
+                <div class="h-px bg-panelborder/60"></div>
+                <div>
+                    <div class="text-[11px] uppercase tracking-wide text-rose-300/70 mb-2">高风险操作</div>
+                    <div class="space-y-2">
+                        <button @click="showSiteBatchActionDrawer = false; batchDeleteSites()" :disabled="selectedSiteIds.length===0" class="w-full text-left px-3 py-2 rounded border border-danger/50 text-danger hover:bg-danger/10 disabled:opacity-40">批量删除</button>
+                        <button @click="showSiteBatchActionDrawer = false; cleanupStuckDeployingSites()" class="w-full text-left px-3 py-2 rounded border border-warning/50 text-warning hover:bg-warning/10">清理超时部署</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="showSitePluginSelectDrawer" class="fixed inset-0 z-[111] flex">
+        <div class="flex-1 bg-black/60" @click="closeSitePluginSelectDrawer"></div>
+        <div class="w-[520px] bg-panelbg border-l border-panelborder p-5 overflow-y-auto">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-white font-bold">选择插件</h3>
+                <button @click="closeSitePluginSelectDrawer" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="text-xs text-gray-400 mb-3">目标：{{ activeSitePluginTargetLabel || '-' }}</div>
+            <div class="space-y-2">
+                <div v-for="p in plugins" :key="'site-plugin-pick-'+p.id" class="bg-darkbg border border-panelborder rounded p-3">
+                    <div class="flex items-center justify-between">
+                        <div class="text-sm text-gray-200">{{ p.name }}</div>
+                        <div class="text-xs text-fuchsia-300">v{{ p.current_version }}</div>
+                    </div>
+                    <div class="text-[11px] text-gray-500 mt-1">{{ p.owner_username || '-' }}</div>
+                    <div class="mt-2">
+                        <button @click="applyPluginToSiteByTask(p)" class="text-xs px-3 py-1 rounded border border-warning/60 text-warning bg-warning/10">下发到目标站点</button>
+                    </div>
+                </div>
+                <div v-if="!plugins.length" class="text-xs text-gray-500 text-center py-8">暂无插件</div>
             </div>
         </div>
     </div>
@@ -1120,6 +1455,7 @@
                 okText: '确认',
                 cancelText: '取消',
                 altText: '仅本地',
+                selectOptions: [],
                 resolver: null,
             });
             const TOAST_THEME_MAP = {
@@ -1155,11 +1491,26 @@
             const toastClassWithPointer = (type) => [...toastClass(type), 'pointer-events-auto'];
             const toastIcon = (type) => ['fa-solid mr-2', toastMeta(type).icon];
             const openUiDialog = (opts = {}) => new Promise((resolve) => {
+                const mode = String(opts.mode || 'confirm');
+                const rawOptions = Array.isArray(opts.options) ? opts.options : [];
+                const normalizedOptions = rawOptions
+                    .map((opt) => {
+                        if (typeof opt === 'string' || typeof opt === 'number') {
+                            return { label: String(opt), value: String(opt) };
+                        }
+                        if (opt && typeof opt === 'object') {
+                            return { label: String(opt.label ?? opt.value ?? ''), value: String(opt.value ?? opt.label ?? '') };
+                        }
+                        return null;
+                    })
+                    .filter(Boolean);
                 uiDialog.visible = true;
                 uiDialog.title = String(opts.title || '操作确认');
                 uiDialog.message = String(opts.message || '');
-                uiDialog.mode = String(opts.mode || 'confirm');
-                uiDialog.inputValue = String(opts.defaultValue || '');
+                uiDialog.mode = mode;
+                uiDialog.selectOptions = normalizedOptions;
+                const fallbackSelectValue = mode === 'select' && normalizedOptions.length ? String(normalizedOptions[0].value) : '';
+                uiDialog.inputValue = String(opts.defaultValue || fallbackSelectValue);
                 uiDialog.placeholder = String(opts.placeholder || '');
                 uiDialog.okText = String(opts.okText || '确认');
                 uiDialog.cancelText = String(opts.cancelText || '取消');
@@ -1196,6 +1547,19 @@
                 if (ret.action !== 'ok') return null;
                 return String(ret.value || '').trim();
             };
+            const askTextarea = async (message, opts = {}) => {
+                const ret = await openUiDialog({
+                    mode: 'textarea',
+                    message,
+                    title: opts.title || '请输入',
+                    okText: opts.okText || '确定',
+                    cancelText: opts.cancelText || '取消',
+                    defaultValue: opts.defaultValue || '',
+                    placeholder: opts.placeholder || '',
+                });
+                if (ret.action !== 'ok') return null;
+                return String(ret.value || '').trim();
+            };
             const askChoice = async (message, opts = {}) => {
                 const ret = await openUiDialog({
                     mode: 'choice',
@@ -1206,6 +1570,19 @@
                     altText: opts.altText || '次要操作',
                 });
                 return ret.action;
+            };
+            const askSelect = async (message, opts = {}) => {
+                const ret = await openUiDialog({
+                    mode: 'select',
+                    message,
+                    title: opts.title || '请选择',
+                    okText: opts.okText || '确定',
+                    cancelText: opts.cancelText || '取消',
+                    options: opts.options || [],
+                    defaultValue: opts.defaultValue || '',
+                });
+                if (ret.action !== 'ok') return null;
+                return String(ret.value || '').trim();
             };
 
             const checkHealth = async () => {
@@ -1361,6 +1738,8 @@
             const landingSwitchTargetIds = ref([]);
             const landingSwitchContextLabel = ref('');
             const isSwitchingLanding = ref(false);
+            const isApplyingRedirect = ref(false);
+            const redirectApplyingText = ref('');
             const serverStatusCards = ref([]);
             const showServerStatusDrawer = ref(false);
             const activeServerStatus = ref(null);
@@ -1370,11 +1749,59 @@
             const homeTaskStatusFilter = ref('all');
             const uploadTaskStatusFilter = ref('all');
             const landingTaskStatusFilter = ref('all');
+            const pluginTaskStatusFilter = ref('all');
             const handledTaskStateKeys = new Set();
             const handledTaskFailureToasts = new Set();
             const showLogDetailDrawer = ref(false);
             const activeLogDetail = ref(null);
             const activeLogDetailType = ref('operation');
+
+            const plugins = ref([]);
+            const pluginVersions = ref([]);
+            const pluginTemplateCode = ref('');
+            const activePlugin = ref(null);
+            const showPluginEditorDrawer = ref(false);
+            const showPluginSitesDrawer = ref(false);
+            const showPluginRedeployDrawer = ref(false);
+            const pluginPhpFileInput = ref(null);
+            const pluginPhpUploadFile = ref(null);
+            const pluginPhpPreview = ref('');
+            const isPluginPhpDragOver = ref(false);
+            const pluginSitesFilter = reactive({ server_id: '', version: '' });
+            const pluginSitesPage = reactive({ items: [], total: 0, page: 1, page_size: 20, total_pages: 1 });
+            const pluginRedeployMode = ref('all_sites');
+            const pluginRedeploySelectedSiteIds = ref([]);
+            const pluginRedeploySelectedServerId = ref('');
+            const pluginRedeployVersion = ref('');
+            const showSiteBatchActionDrawer = ref(false);
+            const showSitePluginSelectDrawer = ref(false);
+            const activeSitePluginTargetIds = ref([]);
+            const activeSitePluginTargetLabel = ref('');
+            const pluginEditorForm = reactive({
+                id: null,
+                name: '',
+                owner_username: 'admin',
+                ip_whitelist: '',
+                version: '1.0.1',
+                change_log: '',
+                created_by: 'admin',
+            });
+            const semverParts = (v) => {
+                const m = String(v || '').trim().match(/^(\d+)\.(\d+)\.(\d+)$/);
+                if (!m) return [0, 0, 0];
+                return [Number(m[1]), Number(m[2]), Number(m[3])];
+            };
+            const pluginVersionOptions = computed(() => {
+                const raw = (pluginVersions.value || []).map(x => String(x.version || '').trim()).filter(Boolean);
+                const uniq = [...new Set(raw)];
+                return uniq.sort((a, b) => {
+                    const pa = semverParts(a);
+                    const pb = semverParts(b);
+                    if (pb[0] !== pa[0]) return pb[0] - pa[0];
+                    if (pb[1] !== pa[1]) return pb[1] - pa[1];
+                    return pb[2] - pa[2];
+                });
+            });
             const isAllSitesSelected = computed(() => sites.value.length > 0 && sites.value.every(s => selectedSiteIds.value.includes(s.id)));
             const fetchSites = async () => {
                 try {
@@ -1438,7 +1865,7 @@
                         let needRefreshSites = false;
                         for (const item of (taskLogs.value || [])) {
                             const taskType = String(item.task_type || '');
-                            if (!['switch_tdk_batch', 'switch_https_batch', 'delete_site_batch', 'switch_landing_batch'].includes(taskType)) continue;
+                            if (!['switch_tdk_batch', 'switch_https_batch', 'delete_site_batch', 'switch_landing_batch', 'plugin_redeploy_batch'].includes(taskType)) continue;
                             const status = String(item.status || '').toLowerCase();
                             if (!['success', 'failed'].includes(status)) continue;
                             const key = `${item.id}:${status}`;
@@ -1478,6 +1905,11 @@
             const filteredLandingTaskLogs = computed(() => {
                 if (landingTaskStatusFilter.value === 'all') return landingTaskLogs.value;
                 return landingTaskLogs.value.filter(x => String(x.status || '').toLowerCase() === landingTaskStatusFilter.value);
+            });
+            const pluginTaskLogs = computed(() => (taskLogs.value || []).filter(x => ['plugin_redeploy_batch'].includes(String(x.task_type || ''))).slice(0, 120));
+            const filteredPluginTaskLogs = computed(() => {
+                if (pluginTaskStatusFilter.value === 'all') return pluginTaskLogs.value;
+                return pluginTaskLogs.value.filter(x => String(x.status || '').toLowerCase() === pluginTaskStatusFilter.value);
             });
             const filteredHomeTaskLogs = computed(() => {
                 const all = (taskLogs.value || []).slice(0, 60);
@@ -1650,6 +2082,77 @@
                 } catch (e) {
                     showToast(e, 'error');
                 }
+            };
+            const normalizeRedirectIpWhitelist = (text) => String(text || '')
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(Boolean)
+                .join('\n');
+            const applyRedirectSwitch = async (ids, enabled, defaultWhitelist = '') => {
+                if (!ids.length) return;
+                const ipWhitelist = enabled ? normalizeRedirectIpWhitelist(defaultWhitelist || '') : '';
+                redirectApplyingText.value = `正在${enabled ? '开启' : '关闭'}跳转开关（${ids.length}站）...`;
+                isApplyingRedirect.value = true;
+                try {
+                    let res;
+                    try {
+                        res = await ax.post('/sites/batch-switch-redirect', {
+                            site_ids: ids,
+                            redirect_enabled: !!enabled,
+                            ip_whitelist: ipWhitelist,
+                        });
+                    } catch (e) {
+                        if (String(e || '').toLowerCase().includes('method not allowed')) {
+                            res = await ax.post('/sites/batch-switch-redirect/', {
+                                site_ids: ids,
+                                redirect_enabled: !!enabled,
+                                ip_whitelist: ipWhitelist,
+                            });
+                        } else {
+                            throw e;
+                        }
+                    }
+                    const failed = Array.isArray(res?.failed) ? res.failed : [];
+                    if (failed.length) {
+                        const first = failed[0];
+                        showToast(`已完成：成功 ${res.done || 0}，失败 ${failed.length}（示例：${first.domain || '-'} ${first.reason || '-'})`, 'warning');
+                    } else {
+                        showToast(`跳转开关已同步：${res.done || ids.length} 条`, 'success');
+                    }
+                    await fetchSites();
+                } catch (e) {
+                    showToast(e, 'error');
+                } finally {
+                    isApplyingRedirect.value = false;
+                }
+            };
+            const batchEnableRedirect = async () => {
+                const ids = [...selectedSiteIds.value];
+                if (!ids.length) return;
+                await applyRedirectSwitch(ids, true, '');
+            };
+            const batchDisableRedirect = async () => {
+                const ids = [...selectedSiteIds.value];
+                if (!ids.length) return;
+                const ok = await askConfirm(`确认关闭 ${ids.length} 个站点的跳转开关？`, {
+                    title: '批量关闭跳转',
+                    okText: '确认关闭',
+                });
+                if (!ok) return;
+                await applyRedirectSwitch(ids, false, '');
+            };
+            const handleSiteRedirectToggle = async (site) => {
+                if (!site?.id) return;
+                if (site.redirect_enabled) {
+                    const ok = await askConfirm(`确认关闭 ${site.domain} 的跳转开关？`, {
+                        title: '关闭跳转',
+                        okText: '确认关闭',
+                    });
+                    if (!ok) return;
+                    await applyRedirectSwitch([site.id], false, '');
+                    return;
+                }
+                await applyRedirectSwitch([site.id], true, site.redirect_ip_whitelist || '');
             };
             const getHttpsDaysLeft = (site) => {
                 if (!site?.https_enabled || !site?.https_expire_at) return null;
@@ -2227,6 +2730,342 @@
                 }
             };
 
+            // ---- 插件管理（单插件） ----
+            const fetchPlugins = async () => {
+                try {
+                    plugins.value = await ax.get('/plugins/');
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const openPluginUploadModal = async () => {
+                const name = await askInput('输入插件名称', { title: '上传插件', defaultValue: '跳转守卫插件' });
+                if (name === null) return;
+                const changeLog = await askInput('输入本次更新内容', { title: '更新内容', defaultValue: '初始化插件' });
+                if (changeLog === null) return;
+                try {
+                    await ax.post('/plugins/upload', {
+                        name: String(name || '').trim() || '跳转守卫插件',
+                        owner_username: 'admin',
+                        config: { enabled: false, ip_whitelist: '', redirect_path: '/ldy/' },
+                        version: '1.0.1',
+                        change_log: String(changeLog || '').trim() || '初始化插件',
+                        created_by: 'admin',
+                    });
+                    showToast('插件上传成功', 'success');
+                    await fetchPlugins();
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const openPluginEditor = async (item) => {
+                if (!item?.id) return;
+                activePlugin.value = item;
+                pluginEditorForm.id = item.id;
+                pluginEditorForm.name = item.name || '';
+                pluginEditorForm.owner_username = item.owner_username || 'admin';
+                try {
+                    const suggest = await ax.get(`/plugins/${item.id}/suggest-version`);
+                    pluginEditorForm.version = suggest.suggest_version || item.current_version || '1.0.1';
+                } catch (_) {
+                    pluginEditorForm.version = item.current_version || '1.0.1';
+                }
+                pluginEditorForm.change_log = '';
+                pluginEditorForm.created_by = 'admin';
+                pluginPhpUploadFile.value = null;
+                const cfg = (() => {
+                    try { return JSON.parse(item.config_json || '{}'); } catch (_) { return {}; }
+                })();
+                pluginEditorForm.ip_whitelist = String(cfg.ip_whitelist || '');
+                try {
+                    const codeRes = await ax.get(`/plugins/${item.id}/template-code`);
+                    pluginTemplateCode.value = codeRes.code || '';
+                } catch (e) {
+                    pluginTemplateCode.value = '';
+                    showToast(e, 'error');
+                }
+                showPluginEditorDrawer.value = true;
+            };
+            const copyPluginTemplateCode = async () => {
+                const text = String(pluginTemplateCode.value || '').trim();
+                if (!text) return showToast('当前没有可复制的代码', 'warning');
+                const ok = await copyText(text);
+                showToast(ok ? '代码已复制' : '复制失败，请检查浏览器权限', ok ? 'success' : 'error');
+            };
+            const closePluginEditor = () => {
+                showPluginEditorDrawer.value = false;
+                pluginTemplateCode.value = '';
+                pluginPhpUploadFile.value = null;
+                pluginPhpPreview.value = '';
+                isPluginPhpDragOver.value = false;
+            };
+            const clearPluginPhpSelection = () => {
+                pluginPhpUploadFile.value = null;
+                pluginPhpPreview.value = '';
+                if (pluginPhpFileInput.value) pluginPhpFileInput.value.value = '';
+            };
+            const fetchPluginVersions = async (pluginId) => {
+                if (!pluginId) return [];
+                const list = await ax.get(`/plugins/${pluginId}/versions`);
+                pluginVersions.value = list || [];
+                return pluginVersions.value;
+            };
+            const savePluginEditor = async () => {
+                if (!pluginEditorForm.id) return;
+                if (!pluginEditorForm.change_log.trim()) return showToast('请填写更新内容', 'error');
+                try {
+                    await ax.put(`/plugins/${pluginEditorForm.id}`, {
+                        name: pluginEditorForm.name,
+                        owner_username: pluginEditorForm.owner_username,
+                        config: { enabled: true, ip_whitelist: pluginEditorForm.ip_whitelist, redirect_path: '/ldy/' },
+                        version: pluginEditorForm.version,
+                        change_log: pluginEditorForm.change_log,
+                        created_by: pluginEditorForm.created_by || 'admin',
+                    });
+                    showToast('插件配置已保存', 'success');
+                    closePluginEditor();
+                    await fetchPlugins();
+                    await fetchPluginVersions(pluginEditorForm.id);
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const validatePluginPhpFile = async (file) => {
+                if (!file) return false;
+                const filename = String(file.name || '').toLowerCase();
+                if (!filename.endsWith('.php')) {
+                    showToast('仅支持 .php 文件', 'warning');
+                    return false;
+                }
+                const maxBytes = 1024 * 1024;
+                if ((file.size || 0) > maxBytes) {
+                    showToast('PHP 文件过大，请控制在 1MB 以内', 'warning');
+                    return false;
+                }
+                try {
+                    const text = await file.text();
+                    if (!String(text || '').includes('<?php')) {
+                        showToast('PHP 文件缺少 `<?php` 起始标签', 'warning');
+                        return false;
+                    }
+                    pluginPhpPreview.value = String(text || '').split(/\r?\n/).slice(0, 20).join('\n');
+                } catch (_) {
+                    showToast('读取 PHP 文件失败，请重试', 'error');
+                    return false;
+                }
+                return true;
+            };
+            const onPluginPhpFileChange = async () => {
+                const selected = pluginPhpFileInput.value?.files?.[0] || null;
+                if (!selected) {
+                    pluginPhpUploadFile.value = null;
+                    return;
+                }
+                const ok = await validatePluginPhpFile(selected);
+                pluginPhpUploadFile.value = ok ? selected : null;
+                if (!ok) clearPluginPhpSelection();
+            };
+            const onPluginPhpDrop = async (evt) => {
+                isPluginPhpDragOver.value = false;
+                const dropped = evt?.dataTransfer?.files?.[0] || null;
+                if (!dropped) return;
+                const ok = await validatePluginPhpFile(dropped);
+                pluginPhpUploadFile.value = ok ? dropped : null;
+                if (!ok) pluginPhpPreview.value = '';
+            };
+            const submitPluginPhpUpload = async () => {
+                if (!pluginEditorForm.id) return;
+                const selected = pluginPhpUploadFile.value || pluginPhpFileInput.value?.files?.[0];
+                if (!selected) return showToast('请先选择 PHP 文件', 'error');
+                if (!pluginEditorForm.change_log.trim()) return showToast('上传代码前请填写更新内容', 'error');
+                const form = new FormData();
+                form.append('file', selected);
+                form.append('version', String(pluginEditorForm.version || '').trim());
+                form.append('change_log', pluginEditorForm.change_log);
+                form.append('created_by', pluginEditorForm.created_by || 'admin');
+                try {
+                    const res = await ax.post(`/plugins/${pluginEditorForm.id}/upload-php`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+                    showToast('PHP上传成功，语法检查通过', 'success');
+                    pluginPhpUploadFile.value = null;
+                    pluginPhpPreview.value = '';
+                    if (pluginPhpFileInput.value) pluginPhpFileInput.value.value = '';
+                    await fetchPlugins();
+                    await fetchPluginVersions(pluginEditorForm.id);
+                    const codeRes = await ax.get(`/plugins/${pluginEditorForm.id}/template-code`);
+                    pluginTemplateCode.value = codeRes.code || '';
+                    pluginEditorForm.version = (res && res.current_version) || pluginEditorForm.version;
+                    pluginEditorForm.change_log = '';
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const openPluginVersions = async (item) => {
+                if (!item?.id) return;
+                try {
+                    await fetchPluginVersions(item.id);
+                    const text = pluginVersions.value.map(v => `v${v.version}｜${new Date(v.created_at).toLocaleString()}｜${v.created_by || '-'}\n${v.change_log || '-'}`).join('\n\n');
+                    await askTextarea(text || '暂无版本记录', { title: `版本历史：${item.name}`, okText: '关闭', cancelText: '关闭', defaultValue: text || '暂无版本记录' });
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const fetchPluginSites = async () => {
+                if (!activePlugin.value?.id) return;
+                try {
+                    const params = new URLSearchParams();
+                    params.set('page', String(pluginSitesPage.page));
+                    params.set('page_size', String(pluginSitesPage.page_size));
+                    if (pluginSitesFilter.server_id) params.set('server_id', String(pluginSitesFilter.server_id));
+                    if (pluginSitesFilter.version) params.set('version', String(pluginSitesFilter.version).trim());
+                    const res = await ax.get(`/plugins/${activePlugin.value.id}/sites?${params.toString()}`);
+                    pluginSitesPage.items = res.items || [];
+                    pluginSitesPage.total = res.total || 0;
+                    pluginSitesPage.total_pages = Math.max(res.total_pages || 1, 1);
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const changePluginSitesPage = async (nextPage) => {
+                if (nextPage < 1 || nextPage > pluginSitesPage.total_pages) return;
+                pluginSitesPage.page = nextPage;
+                await fetchPluginSites();
+            };
+            const openPluginSites = async (item) => {
+                if (!item?.id) return;
+                activePlugin.value = item;
+                await fetchPluginVersions(item.id);
+                pluginSitesFilter.server_id = '';
+                pluginSitesFilter.version = '';
+                pluginSitesPage.page = 1;
+                showPluginSitesDrawer.value = true;
+                await fetchPluginSites();
+            };
+            const openPluginRedeploy = async (item) => {
+                if (!item?.id) return;
+                activePlugin.value = item;
+                await fetchPluginVersions(item.id);
+                pluginSitesFilter.server_id = '';
+                pluginSitesFilter.version = '';
+                pluginSitesPage.page = 1;
+                pluginRedeployMode.value = 'all_sites';
+                pluginRedeploySelectedSiteIds.value = [];
+                pluginRedeploySelectedServerId.value = '';
+                pluginRedeployVersion.value = item.current_version || '';
+                showPluginRedeployDrawer.value = true;
+                await fetchPluginSites();
+            };
+            const togglePluginRedeploySite = (siteId, evt) => {
+                const checked = !!evt?.target?.checked;
+                if (checked) {
+                    if (!pluginRedeploySelectedSiteIds.value.includes(siteId)) pluginRedeploySelectedSiteIds.value.push(siteId);
+                } else {
+                    pluginRedeploySelectedSiteIds.value = pluginRedeploySelectedSiteIds.value.filter(id => id !== siteId);
+                }
+            };
+            const togglePluginRedeployCurrentPage = (evt) => {
+                const checked = !!evt?.target?.checked;
+                const currentIds = (pluginSitesPage.items || []).map(x => x.site_id);
+                if (!checked) {
+                    pluginRedeploySelectedSiteIds.value = pluginRedeploySelectedSiteIds.value.filter(id => !currentIds.includes(id));
+                    return;
+                }
+                const set = new Set(pluginRedeploySelectedSiteIds.value);
+                currentIds.forEach(id => set.add(id));
+                pluginRedeploySelectedSiteIds.value = [...set];
+            };
+            const submitPluginRedeploy = async () => {
+                if (!activePlugin.value?.id) return;
+                const payload = { target_mode: pluginRedeployMode.value, version: String(pluginRedeployVersion.value || '').trim() || undefined };
+                if (pluginRedeployMode.value === 'single_server') {
+                    if (!pluginRedeploySelectedServerId.value) return showToast('请选择服务器', 'error');
+                    payload.server_id = Number(pluginRedeploySelectedServerId.value);
+                } else if (pluginRedeployMode.value === 'single_site') {
+                    const ids = [...new Set((pluginRedeploySelectedSiteIds.value || []).map(x => Number(x)).filter(x => Number.isInteger(x) && x > 0))];
+                    if (!ids.length) return showToast('请至少选择一个站点', 'error');
+                    payload.site_ids = ids;
+                }
+                const ok = await askConfirm('确认提交插件重部署任务？', { title: '确认重部署', okText: '提交任务' });
+                if (!ok) return;
+                try {
+                    await ax.post(`/plugins/${activePlugin.value.id}/redeploy`, payload);
+                    showToast('插件重部署任务已入队', 'success');
+                    showPluginRedeployDrawer.value = false;
+                    await fetchTaskLogs();
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const closeSitePluginSelectDrawer = () => {
+                showSitePluginSelectDrawer.value = false;
+                activeSitePluginTargetIds.value = [];
+                activeSitePluginTargetLabel.value = '';
+            };
+            const openSitePluginSelectDrawer = async (ids, labelText) => {
+                const targetIds = [...new Set((ids || []).map(x => Number(x)).filter(x => Number.isInteger(x) && x > 0))];
+                if (!targetIds.length) return;
+                activeSitePluginTargetIds.value = targetIds;
+                activeSitePluginTargetLabel.value = labelText || `${targetIds.length} 个站点`;
+                showSitePluginSelectDrawer.value = true;
+                if (!plugins.value.length) await fetchPlugins();
+                if (!plugins.value.length) return showToast('暂无可用插件', 'warning');
+            };
+            const applyPluginToSiteByTask = async (plugin) => {
+                const ids = [...activeSitePluginTargetIds.value];
+                if (!ids.length || !plugin?.id) return;
+                const targetLabel = activeSitePluginTargetLabel.value || `${ids.length} 个站点`;
+                const ok = await askConfirm(`确认将插件 ${plugin.name} v${plugin.current_version} 下发到 ${targetLabel}？`, {
+                    title: '确认下发插件',
+                    okText: '提交任务',
+                });
+                if (!ok) return;
+                try {
+                    await ax.post(`/plugins/${plugin.id}/redeploy`, {
+                        target_mode: 'single_site',
+                        site_ids: ids,
+                        version: plugin.current_version,
+                    });
+                    showToast('插件下发任务已入队', 'success');
+                    closeSitePluginSelectDrawer();
+                    await fetchTaskLogs();
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+            const openBatchSitePluginSelectDrawer = async () => {
+                const ids = [...selectedSiteIds.value];
+                if (!ids.length) return showToast('请先选择站点', 'warning');
+                await openSitePluginSelectDrawer(ids, `批量 ${ids.length} 个站点`);
+            };
+            const handleSitePluginStatusClick = async (site) => {
+                if (!site?.id) return;
+                const switchLabel = site.redirect_enabled ? '关闭跳转' : '开启跳转';
+                const action = await askChoice(
+                    `站点：${site.domain}\n请选择操作`,
+                    { title: '站点插件操作', okText: switchLabel, altText: '选择插件', cancelText: '取消' }
+                );
+                if (action === 'cancel') return;
+                if (action === 'ok') {
+                    await applyRedirectSwitch([site.id], !site.redirect_enabled, site.redirect_ip_whitelist || '');
+                    return;
+                }
+                await openSitePluginSelectDrawer([site.id], site.domain || '');
+            };
+            const openSiteBatchActionDrawer = () => {
+                showSiteBatchActionDrawer.value = true;
+            };
+            const deletePlugin = async (item) => {
+                if (!item?.id) return;
+                const ok = await askConfirm(`确认删除插件 ${item.name}？`, { title: '删除插件', okText: '删除' });
+                if (!ok) return;
+                try {
+                    await ax.delete(`/plugins/${item.id}`);
+                    showToast('插件已删除', 'success');
+                    await fetchPlugins();
+                } catch (e) {
+                    showToast(e, 'error');
+                }
+            };
+
             // ---- 批量建站控制台 ----
             const activeDrawer = ref(null);
             const hostHeaderOptions = ['@', 'www', 'm'];
@@ -2487,7 +3326,7 @@
             let panelRefreshTimer = null;
             let siteLogModalRefreshTimer = null;
             onMounted(() => {
-                checkHealth(); fetchServers(); fetchTdks(); fetchTemplates(); fetchLandingPages(); fetchSites(); fetchServerStatusSummary(); fetchOperationLogs(); fetchTaskLogs();
+                checkHealth(); fetchServers(); fetchTdks(); fetchTemplates(); fetchLandingPages(); fetchPlugins(); fetchSites(); fetchServerStatusSummary(); fetchOperationLogs(); fetchTaskLogs();
                 siteAutoRefreshTimer = setInterval(() => {
                     if (currentTab.value !== 'sites') return;
                     const hasRunning = sites.value.some(s => s.status === 'deploying');
@@ -2506,6 +3345,9 @@
                     } else if (currentTab.value === 'landing_pages') {
                         fetchTaskLogs();
                         fetchLandingPages();
+                    } else if (currentTab.value === 'plugins') {
+                        fetchTaskLogs();
+                        fetchPlugins();
                     }
                 }, 3000);
                 siteLogModalRefreshTimer = setInterval(() => {
@@ -2531,6 +3373,9 @@
                 } else if (tab === 'landing_pages') {
                     fetchLandingPages();
                     fetchTaskLogs();
+                } else if (tab === 'plugins') {
+                    fetchPlugins();
+                    fetchTaskLogs();
                 } else if (tab === 'tdks') {
                     fetchOperationLogs();
                     fetchTaskLogs();
@@ -2545,12 +3390,13 @@
 
             return {
                 currentTab, apiStatus, apiBaseUrl, apiSourceLabel, toasts, showToast, copyToastText, toastClass, toastClassWithPointer, toastIcon, uiDialog, resolveUiDialog,
-                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, openBatchTdkDrawer, openSingleTdkDrawer, showTdkSwitchDrawer, tdkSwitchContextLabel, closeTdkSwitchDrawer, applyTdkToTargets, openBatchLandingDrawer, openSingleLandingDrawer, showLandingSwitchDrawer, landingSwitchContextLabel, closeLandingSwitchDrawer, applyLandingToTargets, batchEnableHttps, enableSiteHttps, handleSiteHttpsStatus, httpsStatusMeta, sitePublicUrl, siteAdminUrl, openSitePublic, openSiteAdmin, cleanupStuckDeployingSites, copySiteAdminUsername, copySiteAdminPassword, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, closeSiteLogsModal, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs, isSiteLogStreaming, serverStatusCards, fetchServerStatusSummary, showServerStatusDrawer, activeServerStatus, openServerStatusDrawer, refreshOneServerStatus, formatPercent, ringStyle, ringColor,
-                operationLogs, taskLogs, homeLogTab, homeTaskStatusFilter, uploadTaskStatusFilter, landingTaskStatusFilter, fetchOperationLogs, fetchTaskLogs, uploadTaskLogs, filteredUploadTaskLogs, landingTaskLogs, filteredLandingTaskLogs, filteredHomeTaskLogs, taskStatusMeta, showLogDetailDrawer, activeLogDetail, activeLogDetailType, openLogDetailDrawer, prettyLogDetail, failedDeleteItems, copyFailedDeleteList, retryFailedDeleteItems,
+                sites, siteFilterServerId, fetchSites, onSiteFilterChange, deleteSite, selectedSiteIds, isAllSitesSelected, toggleSelectSite, toggleSelectAllSites, batchDeleteSites, openBatchTdkDrawer, openSingleTdkDrawer, showTdkSwitchDrawer, tdkSwitchContextLabel, closeTdkSwitchDrawer, applyTdkToTargets, openBatchLandingDrawer, openSingleLandingDrawer, showLandingSwitchDrawer, landingSwitchContextLabel, closeLandingSwitchDrawer, applyLandingToTargets, batchEnableHttps, batchEnableRedirect, batchDisableRedirect, handleSiteRedirectToggle, openSiteBatchActionDrawer, openBatchSitePluginSelectDrawer, handleSitePluginStatusClick, showSitePluginSelectDrawer, closeSitePluginSelectDrawer, applyPluginToSiteByTask, enableSiteHttps, handleSiteHttpsStatus, httpsStatusMeta, sitePublicUrl, siteAdminUrl, openSitePublic, openSiteAdmin, cleanupStuckDeployingSites, copySiteAdminUsername, copySiteAdminPassword, sitePage, siteTotalPages, siteTotal, changeSitePage, showSiteLogsModal, openSiteLogs, closeSiteLogsModal, activeLogSite, siteLogs, fetchSiteLogs, isLoadingSiteLogs, isSiteLogStreaming, serverStatusCards, fetchServerStatusSummary, showServerStatusDrawer, activeServerStatus, openServerStatusDrawer, refreshOneServerStatus, formatPercent, ringStyle, ringColor, isApplyingRedirect, redirectApplyingText,
+                operationLogs, taskLogs, homeLogTab, homeTaskStatusFilter, uploadTaskStatusFilter, landingTaskStatusFilter, pluginTaskStatusFilter, fetchOperationLogs, fetchTaskLogs, uploadTaskLogs, filteredUploadTaskLogs, landingTaskLogs, filteredLandingTaskLogs, pluginTaskLogs, filteredPluginTaskLogs, filteredHomeTaskLogs, taskStatusMeta, showLogDetailDrawer, activeLogDetail, activeLogDetailType, openLogDetailDrawer, prettyLogDetail, failedDeleteItems, copyFailedDeleteList, retryFailedDeleteItems,
                 servers, showAddServerModal, addForm, submitAddServer, testServer, updateServerSshPort, deleteServer, testingId,
                 tdks, showAddTdkModal, bulkTdkInput, parsedTdksCount, parseTdkLines, submitBulkTdk, deleteTdk, isSubmittingTdk,
                 templates, showUploadModal, uploadForm, isUploading, submitUpload, fileInput, deleteTemplate, refreshTemplatePage, uploadProgress, uploadedSizeText, totalSizeText, uploadSpeedText, closeUploadModal, cancelUpload, retryLastUpload, uploadRetryLimit, currentUploadAttempt, uploadLastFailed, hasRetryUploadPayload, isTemplateDragOver, templateUploadFile, onTemplateFileChange, onTemplateFileDrop,
                 landingPages, fetchLandingPages, showLandingUploadModal, landingUploadForm, landingFileInput, isLandingUploading, isLandingDragOver, landingUploadFile, openLandingUploadModal, submitLandingUpload, onLandingFileChange, onLandingFileDrop, previewLanding, renameLanding, deleteLanding,
+                plugins, fetchPlugins, openPluginUploadModal, openPluginEditor, closePluginEditor, savePluginEditor, copyPluginTemplateCode, onPluginPhpFileChange, onPluginPhpDrop, submitPluginPhpUpload, clearPluginPhpSelection, openPluginVersions, openPluginSites, fetchPluginSites, changePluginSitesPage, openPluginRedeploy, submitPluginRedeploy, togglePluginRedeploySite, togglePluginRedeployCurrentPage, deletePlugin, showPluginEditorDrawer, pluginEditorForm, pluginTemplateCode, pluginPhpFileInput, pluginPhpUploadFile, pluginPhpPreview, isPluginPhpDragOver, showPluginSitesDrawer, showPluginRedeployDrawer, showSiteBatchActionDrawer, activeSitePluginTargetIds, activeSitePluginTargetLabel, pluginSitesFilter, pluginSitesPage, pluginVersionOptions, pluginRedeployMode, pluginRedeploySelectedSiteIds, pluginRedeploySelectedServerId, pluginRedeployVersion,
                 deployForm, activeDrawer, openDrawer, selectResource, filteredTemplates, lineCount, updateLineCount, isDeploying, submitDeploy, isFormValid, availableIpCount, copyAvailableIps, hostHeaderOptions, toggleHostHeader, parseAvailableIpPool, parsedIpSummary, parsedIpPreview, domainSeedText, generateDomainIpTemplate, regenAdminCredentials, onDeployServerChange
             };
         }

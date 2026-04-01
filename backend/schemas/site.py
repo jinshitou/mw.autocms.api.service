@@ -16,6 +16,10 @@ class SiteBase(BaseModel):
     admin_password: Optional[str] = None
     landing_page_id: Optional[int] = None
     landing_page_name: Optional[str] = None
+    redirect_enabled: Optional[bool] = False
+    redirect_ip_whitelist: Optional[str] = None
+    plugin_name: Optional[str] = None
+    plugin_version: Optional[str] = None
     https_enabled: Optional[bool] = False
     https_auto_renew: Optional[bool] = True
     https_expire_at: Optional[datetime] = None
@@ -57,6 +61,12 @@ class SiteBatchHttpsRequest(BaseModel):
 class SiteBatchLandingRequest(BaseModel):
     site_ids: List[int] = Field(default_factory=list)
     landing_page_id: int
+
+
+class SiteBatchRedirectRequest(BaseModel):
+    site_ids: List[int] = Field(default_factory=list)
+    redirect_enabled: bool = False
+    ip_whitelist: Optional[str] = ""
 
 
 class SiteDeployLogResponse(BaseModel):

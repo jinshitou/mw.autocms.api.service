@@ -15,9 +15,16 @@ from worker.deploy_tasks import process_batch_switch_tdk, process_batch_enable_h
 from models.site import Site
 from models.server import Server
 from models.asset import TDKConfig, LandingPagePackage
+from models.asset import PluginPackage, SitePluginDeployment
 from models.site_log import SiteDeployLog
 from services.audit_service import create_task_log, update_task_log, log_operation
-from schemas.site import SitePageResponse, SiteBatchDeleteRequest, SiteBatchSwitchTdkRequest, SiteBatchHttpsRequest, SiteBatchLandingRequest, SiteDeployLogResponse
+from services.plugin_deploy_service import (
+    DEFAULT_PLUGIN_TYPE,
+    deploy_redirect_plugin,
+    ensure_default_redirect_plugin,
+    upsert_site_plugin_deployment,
+)
+from schemas.site import SitePageResponse, SiteBatchDeleteRequest, SiteBatchSwitchTdkRequest, SiteBatchHttpsRequest, SiteBatchLandingRequest, SiteBatchRedirectRequest, SiteDeployLogResponse
 
 router = APIRouter()
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -228,6 +235,14 @@ async def _apply_tdk_to_remote_site(site: Site, server: Server, tdk: TDKConfig):
     )
     await execute_remote_cmd(server.main_ip, int(getattr(server, "ssh_port", 22) or 22), clear_cache_cmd, timeout_sec=30)
 
+
+async def _apply_redirect_guard(site: Site, server: Server, redirect_enabled: bool, ip_whitelist_text: str):
+    plugin_cfg = {
+        "enabled": bool(redirect_enabled),
+        "ip_whitelist": str(ip_whitelist_text or "").strip(),
+    }
+    await deploy_redirect_plugin(site, server, plugin_cfg, "1.0.1")
+
 @router.get("/", response_model=SitePageResponse)
 def get_sites(
     server_id: int = None,
@@ -248,6 +263,35 @@ def get_sites(
     total = query.count()
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
     items = query.order_by(Site.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    if items:
+        site_ids = [int(x.id) for x in items]
+        dep_rows = (
+            db.query(SitePluginDeployment)
+            .filter(SitePluginDeployment.site_id.in_(site_ids))
+            .order_by(SitePluginDeployment.id.desc())
+            .all()
+        )
+        latest_dep = {}
+        plugin_ids = set()
+        for dep in dep_rows:
+            sid = int(dep.site_id)
+            if sid in latest_dep:
+                continue
+            latest_dep[sid] = dep
+            plugin_ids.add(int(dep.plugin_id))
+        plugin_map = {
+            int(x.id): x
+            for x in db.query(PluginPackage).filter(PluginPackage.id.in_(list(plugin_ids) or [-1])).all()
+        }
+        for site in items:
+            dep = latest_dep.get(int(site.id))
+            if dep:
+                plugin = plugin_map.get(int(dep.plugin_id))
+                setattr(site, "plugin_name", getattr(plugin, "name", None))
+                setattr(site, "plugin_version", getattr(dep, "version", None))
+            else:
+                setattr(site, "plugin_name", None)
+                setattr(site, "plugin_version", None)
     return {
         "items": items,
         "total": total,
@@ -436,6 +480,100 @@ def batch_switch_landing(payload: SiteBatchLandingRequest, db: Session = Depends
         detail={"site_ids": ids, "landing_page_id": landing.id, "task_log_id": task_log.id, "task_id": task.id},
     )
     return {"status": "success", "queued": len(sites), "missing_ids": missing_ids, "task_log_id": task_log.id, "task_id": task.id}
+
+
+@router.post("/batch-switch-redirect")
+@router.post("/batch-switch-redirect/")
+def batch_switch_redirect(payload: SiteBatchRedirectRequest, db: Session = Depends(get_db)):
+    ids = sorted(set(payload.site_ids or []))
+    if not ids:
+        raise HTTPException(status_code=400, detail="site_ids 不能为空")
+    sites = db.query(Site).filter(Site.id.in_(ids)).all()
+    existing_ids = {s.id for s in sites}
+    missing_ids = [sid for sid in ids if sid not in existing_ids]
+    if not sites:
+        return {"status": "success", "done": 0, "failed": [], "missing_ids": ids}
+
+    enabled = bool(payload.redirect_enabled)
+    ip_whitelist = str(payload.ip_whitelist or "").strip()
+    plugin = ensure_default_redirect_plugin(db)
+    use_version = str(plugin.current_version or "1.0.1")
+    # 站点页开关不再强制输入白名单：优先沿用插件当前配置中的白名单
+    if enabled and not ip_whitelist:
+        try:
+            old_cfg = json.loads(plugin.config_json or "{}")
+            ip_whitelist = str(old_cfg.get("ip_whitelist") or "").strip()
+        except Exception:
+            ip_whitelist = ""
+    plugin.config_json = json.dumps(
+        {
+            "enabled": enabled,
+            "ip_whitelist": ip_whitelist,
+            "redirect_path": "/ldy/",
+            "mobile_ua_regex": "android|iphone|ipod|ipad|windows phone|mobile|blackberry|opera mini|ucbrowser|micromessenger",
+            "spider_ua_keyword": "baiduspider",
+            "allow_baidu_when_whitelisted": True,
+            "non_mobile_response_code": 404,
+        },
+        ensure_ascii=False,
+    )
+    db.add(plugin)
+    db.commit()
+    servers = {s.id: s for s in db.query(Server).all()}
+    done = 0
+    failed = []
+    for site in sites:
+        server = servers.get(site.server_id)
+        if not server:
+            failed.append({"site_id": site.id, "domain": site.domain, "reason": "找不到对应服务器"})
+            continue
+        try:
+            asyncio.run(
+                deploy_redirect_plugin(
+                    site,
+                    server,
+                    {"enabled": enabled, "ip_whitelist": ip_whitelist},
+                    use_version,
+                )
+            )
+            site.redirect_enabled = enabled
+            site.redirect_ip_whitelist = ip_whitelist if enabled else ""
+            upsert_site_plugin_deployment(
+                db,
+                site_id=site.id,
+                plugin_id=plugin.id,
+                version=use_version,
+                enabled=enabled,
+                status="success",
+                error_msg=None,
+                task_log_id=None,
+            )
+            db.add(SiteDeployLog(site_id=site.id, level="success", stage="redirect", message=f"跳转开关已{'开启' if enabled else '关闭'}"))
+            db.commit()
+            done += 1
+        except Exception as exc:
+            db.rollback()
+            failed.append({"site_id": site.id, "domain": site.domain, "reason": str(exc)})
+            upsert_site_plugin_deployment(
+                db,
+                site_id=site.id,
+                plugin_id=plugin.id,
+                version=use_version,
+                enabled=enabled,
+                status="failed",
+                error_msg=str(exc),
+                task_log_id=None,
+            )
+            db.add(SiteDeployLog(site_id=site.id, level="error", stage="redirect", message=f"跳转开关变更失败: {exc}"))
+            db.commit()
+
+    log_operation(
+        db,
+        action="site.batch_switch_redirect",
+        message=f"批量{'开启' if enabled else '关闭'}跳转开关：成功 {done}，失败 {len(failed)}",
+        detail={"site_ids": ids, "enabled": enabled, "done": done, "failed": failed, "missing_ids": missing_ids, "plugin_id": plugin.id, "plugin_version": use_version},
+    )
+    return {"status": "success", "done": done, "failed": failed, "missing_ids": missing_ids}
 
 
 @router.get("/{site_id}/logs", response_model=list[SiteDeployLogResponse])

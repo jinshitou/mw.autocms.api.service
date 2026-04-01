@@ -5,6 +5,7 @@ import uuid
 import os
 
 from core.database import get_db
+from core.runtime_paths import TMP_UPLOAD_DIR
 from models.asset import TemplatePackage
 from schemas.asset import TemplateResponse
 from services.audit_service import log_operation, create_task_log, update_task_log
@@ -27,9 +28,7 @@ async def upload_template(
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="上传文件为空")
-    tmp_dir = "/app/tmp_uploads"
-    os.makedirs(tmp_dir, exist_ok=True)
-    tmp_path = os.path.join(tmp_dir, f"{uuid.uuid4().hex}_{file.filename}")
+    tmp_path = str(TMP_UPLOAD_DIR / f"{uuid.uuid4().hex}_{file.filename}")
     with open(tmp_path, "wb") as fp:
         fp.write(file_bytes)
 

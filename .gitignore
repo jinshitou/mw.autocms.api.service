@@ -7,6 +7,7 @@ serdev.sh
 vuedev.sh
 TODO.md
 .cursor/
+local_dev.db
 
 # 1. 机密配置与环境变量 (⚠️ 极其重要，防黑客盗取 AK/SK 和密码)
 .env

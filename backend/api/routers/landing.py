@@ -5,6 +5,7 @@ import uuid
 import os
 
 from core.database import get_db
+from core.runtime_paths import TMP_UPLOAD_DIR, LANDING_PAGES_DIR
 from models.asset import LandingPagePackage
 from schemas.asset import LandingPageResponse
 from services.audit_service import log_operation, create_task_log, update_task_log
@@ -27,9 +28,7 @@ async def upload_landing(
     if not file_bytes:
         raise HTTPException(status_code=400, detail="上传文件为空")
 
-    tmp_dir = "/app/tmp_uploads"
-    os.makedirs(tmp_dir, exist_ok=True)
-    tmp_path = os.path.join(tmp_dir, f"{uuid.uuid4().hex}_{file.filename}")
+    tmp_path = str(TMP_UPLOAD_DIR / f"{uuid.uuid4().hex}_{file.filename}")
     with open(tmp_path, "wb") as fp:
         fp.write(file_bytes)
 
@@ -89,7 +88,7 @@ def delete_landing(landing_id: int, db: Session = Depends(get_db)):
     name = item.name
     db.delete(item)
     db.commit()
-    preview_dir = f"/app/landing_pages/{landing_id}"
+    preview_dir = str(LANDING_PAGES_DIR / str(landing_id))
     try:
         if os.path.isdir(preview_dir):
             for entry in os.listdir(preview_dir):

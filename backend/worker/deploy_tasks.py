@@ -4,16 +4,19 @@ from core.database import SessionLocal
 from core.bt_api_client import BaotaAPI
 from core.ssh_client import execute_remote_cmd
 from core.obs_client import OBSClient
+from core.runtime_paths import LANDING_PAGES_DIR
 import models.server  # noqa: F401 - 确保 SQLAlchemy 能解析 sites.server_id 外键
 from models.site import Site
 from models.server import Server
 from models.asset import TDKConfig
 from models.asset import TemplatePackage
 from models.asset import LandingPagePackage
+from models.asset import PluginPackage, PluginVersion, SitePluginDeployment
 from models.site_log import SiteDeployLog
 from services.audit_service import update_task_log
 from services.audit_service import log_operation
 from services.tdk_switch_service import apply_tdk_to_remote_site
+from services.plugin_deploy_service import deploy_redirect_plugin, upsert_site_plugin_deployment
 import asyncio
 import random
 import string
@@ -704,7 +707,7 @@ def process_landing_upload(self, task_log_id, file_path, name, remark="", userna
         db.commit()
         db.refresh(item)
 
-        local_dir = f"/app/landing_pages/{item.id}"
+        local_dir = str(LANDING_PAGES_DIR / str(item.id))
         _extract_zip_to_local_preview(file_path, local_dir)
         preview_url = f"/landing_pages/{item.id}/index.html"
 
@@ -1002,6 +1005,170 @@ def process_batch_delete_sites(self, task_log_id, site_ids, purge_bt=True):
             status="failed",
             message=f"批量删除站点失败: {exc}",
             detail={"site_ids": site_ids, "purge_bt": bool(purge_bt), "error": str(exc)},
+            task_ref=self.request.id,
+        )
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True)
+def process_plugin_redeploy_batch(self, task_log_id, plugin_id, target_mode="all_sites", site_id=None, server_id=None, version=None, site_ids=None):
+    db = SessionLocal()
+    try:
+        update_task_log(
+            db,
+            int(task_log_id),
+            status="running",
+            message="插件重部署执行中",
+            detail={
+                "plugin_id": int(plugin_id),
+                "target_mode": target_mode,
+                "site_id": site_id,
+                "site_ids": site_ids,
+                "server_id": server_id,
+                "version": version,
+            },
+            task_ref=self.request.id,
+        )
+        plugin = db.query(PluginPackage).filter(PluginPackage.id == int(plugin_id)).first()
+        if not plugin:
+            raise Exception("插件不存在")
+        plugin_cfg = {}
+        try:
+            plugin_cfg = json.loads(plugin.config_json or "{}")
+        except Exception:
+            plugin_cfg = {}
+        use_version = str(version or plugin.current_version or "").strip()
+        if not use_version:
+            raise Exception("插件版本为空")
+        ver = (
+            db.query(PluginVersion)
+            .filter(PluginVersion.plugin_id == plugin.id, PluginVersion.version == use_version)
+            .order_by(PluginVersion.id.desc())
+            .first()
+        )
+        if not ver:
+            raise Exception("插件版本不存在")
+        try:
+            cfg_snapshot = json.loads(ver.config_snapshot_json or "{}")
+            if isinstance(cfg_snapshot, dict) and cfg_snapshot:
+                plugin_cfg = cfg_snapshot
+        except Exception:
+            pass
+
+        deployment_q = db.query(SitePluginDeployment).filter(SitePluginDeployment.plugin_id == plugin.id)
+        if target_mode == "single_site":
+            picked = sorted({int(x) for x in (site_ids or []) if int(x) > 0})
+            if site_id and int(site_id) > 0:
+                picked.append(int(site_id))
+                picked = sorted(set(picked))
+            if not picked:
+                raise Exception("single_site 模式必须提供 site_id/site_ids")
+            deployment_q = deployment_q.filter(SitePluginDeployment.site_id.in_(picked))
+        elif target_mode == "single_server":
+            if not server_id:
+                raise Exception("single_server 模式必须提供 server_id")
+            deployment_q = deployment_q.join(Site, Site.id == SitePluginDeployment.site_id).filter(Site.server_id == int(server_id))
+        deployments = deployment_q.all()
+        if not deployments:
+            raise Exception("未找到可重部署站点")
+        site_ids = sorted({int(d.site_id) for d in deployments})
+        dep_map = {int(d.site_id): d for d in deployments}
+        sites = db.query(Site).filter(Site.id.in_(site_ids)).all()
+        server_map = {s.id: s for s in db.query(Server).all()}
+
+        done = 0
+        failed = []
+        for site in sites:
+            server = server_map.get(site.server_id)
+            if not server:
+                failed.append({"site_id": site.id, "domain": site.domain, "reason": "找不到对应服务器"})
+                db.add(SiteDeployLog(site_id=site.id, level="error", stage="plugin", message="插件重部署失败：找不到对应服务器"))
+                db.commit()
+                continue
+            dep = dep_map.get(site.id)
+            enabled = bool(int(getattr(dep, "enabled", 1) or 0))
+            if not enabled:
+                upsert_site_plugin_deployment(
+                    db,
+                    site_id=site.id,
+                    plugin_id=plugin.id,
+                    version=use_version,
+                    enabled=False,
+                    status="success",
+                    error_msg=None,
+                    task_log_id=int(task_log_id),
+                )
+                db.commit()
+                done += 1
+                continue
+            try:
+                asyncio.run(deploy_redirect_plugin(site, server, plugin_cfg, use_version))
+                upsert_site_plugin_deployment(
+                    db,
+                    site_id=site.id,
+                    plugin_id=plugin.id,
+                    version=use_version,
+                    enabled=True,
+                    status="success",
+                    error_msg=None,
+                    task_log_id=int(task_log_id),
+                )
+                site.redirect_enabled = True
+                site.redirect_ip_whitelist = str(plugin_cfg.get("ip_whitelist") or "")
+                db.add(SiteDeployLog(site_id=site.id, level="success", stage="plugin", message=f"插件已重部署: {plugin.name} v{use_version}"))
+                db.commit()
+                done += 1
+            except Exception as exc:
+                db.rollback()
+                failed.append({"site_id": site.id, "domain": site.domain, "reason": str(exc)})
+                upsert_site_plugin_deployment(
+                    db,
+                    site_id=site.id,
+                    plugin_id=plugin.id,
+                    version=use_version,
+                    enabled=True,
+                    status="failed",
+                    error_msg=str(exc),
+                    task_log_id=int(task_log_id),
+                )
+                db.add(SiteDeployLog(site_id=site.id, level="error", stage="plugin", message=f"插件重部署失败: {exc}"))
+                db.commit()
+
+        status = "success" if not failed else ("success" if done > 0 else "failed")
+        update_task_log(
+            db,
+            int(task_log_id),
+            status=status,
+            message=f"插件重部署完成：成功 {done}，失败 {len(failed)}",
+            detail={
+                "plugin_id": plugin.id,
+                "plugin_name": plugin.name,
+                "version": use_version,
+                "target_mode": target_mode,
+                "site_id": site_id,
+                "site_ids": site_ids,
+                "server_id": server_id,
+                "done": done,
+                "failed": failed,
+            },
+            task_ref=self.request.id,
+        )
+        log_operation(
+            db,
+            action="plugin.redeploy.done",
+            message=f"插件重部署完成：成功 {done}，失败 {len(failed)}",
+            detail={"plugin_id": plugin.id, "version": use_version, "done": done, "failed": failed, "target_mode": target_mode},
+        )
+        return {"done": done, "failed": failed}
+    except Exception as exc:
+        update_task_log(
+            db,
+            int(task_log_id),
+            status="failed",
+            message=f"插件重部署失败: {exc}",
+            detail={"plugin_id": plugin_id, "target_mode": target_mode, "site_id": site_id, "site_ids": site_ids, "server_id": server_id, "version": version, "error": str(exc)},
             task_ref=self.request.id,
         )
         raise
